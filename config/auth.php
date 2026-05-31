@@ -1,31 +1,31 @@
 <?php
  
-function requireLogin(){
-    if(!isset($_SESSION["user"])) {
+        function requireLogin(){
+            if(!isset($_SESSION["user"])) {
 
-        header("Location: /pocket_money/views/login.php");
-        exit();
-    }
-}
-function requireAdmin() {
+                header("Location: /pocket_money/views/login.php");
+                exit();
+            }
+        }
+        function requireAdmin() {
 
-    requireLogin();
+            requireLogin();
 
-    if($_SESSION["user"]["role"] !== "admin") {
+            if($_SESSION["user"]["role"] !== "admin") {
 
-        header("Location: /pocket_money/views/dashboard.php");
-        exit();
-    }
-}
-function requireUser() {
+                header("Location: /pocket_money/views/dashboard.php");
+                exit();
+            }
+        }
+        function requireUser() {
 
-    requireLogin();
+            requireLogin();
 
-    if($_SESSION["user"]["role"] !== "user") {
+            if($_SESSION["user"]["role"] !== "user") {
 
-        header("Location: /pocket_money/views/dashboard.php");
-        exit();
-    }
-}
+                header("Location: /pocket_money/views/dashboard.php");
+                exit();
+            }
+        }
 
 ?>
