@@ -1,0 +1,64 @@
+ nav {
+     background: var(--navy);
+     border-bottom: 1px solid var(--navy-border);
+     padding: 14px 0;
+     position: sticky;
+     top: 0;
+     z-index: 100;
+ }
+
+ .nav-inner {
+     display: flex;
+     align-items: center;
+     justify-content: space-between;
+ }
+
+ .nav-logo {
+     font-family: 'Sora', sans-serif;
+     font-weight: 800;
+     font-size: 1.25rem;
+     color: var(--white);
+ }
+
+ .nav-links a {
+     color: var(--text-soft);
+     font-size: .9rem;
+     text-decoration: none;
+     margin-left: 28px;
+     transition: color .2s;
+ }
+
+ .nav-links a:hover {
+     color: var(--white);
+ }
+
+ .nav-actions {
+     display: flex;
+     align-items: center;
+     gap: 14px;
+ }
+
+ .btn-login {
+     background: none;
+     border: none;
+     color: var(--text-soft);
+     font-size: .9rem;
+     cursor: pointer;
+ }
+
+ .btn-cta {
+     background: var(--teal);
+     color: var(--navy);
+     font-weight: 700;
+     border: none;
+     border-radius: 8px;
+     padding: 8px 18px;
+     font-size: .9rem;
+     cursor: pointer;
+     transition: opacity .2s;
+ }
+
+ .btn-cta:hover {
+     opacity: .88;
+ }
+ 

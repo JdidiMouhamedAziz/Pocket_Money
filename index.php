@@ -9,6 +9,6 @@ if (isset($_SESSION['user'])) {
     exit();
 }
 
-header('Location: /pocket_money/views/login.php');
+header('Location: /pocket_money/views/components/landingPage.php');
 exit();
 ?>

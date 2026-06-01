@@ -1,0 +1,40 @@
+:root {
+    --navy: #0d1b2a;
+    --navy-mid: #162032;
+    --navy-card: #1c2b3a;
+    --navy-border: #243447;
+    --teal: #00c9a7;
+    --teal-glow: rgba(0, 201, 167, 0.18);
+    --yellow: #f5c842;
+    --orange: #ff7c3e;
+    --purple: #7c6af5;
+    --blue-bar: #4c9be8;
+    --text-main: #e8edf3;
+    --text-muted: #7a8fa6;
+    --text-soft: #aabbd0;
+    --white: #ffffff;
+    --radius: 14px;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--navy);
+    color: var(--text-main);
+    overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5 {
+    font-family: 'Sora', sans-serif;
+}
