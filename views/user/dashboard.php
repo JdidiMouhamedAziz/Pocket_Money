@@ -1,3 +1,31 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+  session_start();
+}
+
+require_once __DIR__ . '/shared.php';
+
+$currentUserId = $currentUser['id'] ?? ($_SESSION['user']['id'] ?? null);
+$dashboardData = userDashboardData($currentUserId);
+$summary = $dashboardData['summary'] ?? ['balance' => 0, 'income' => 0, 'expenses' => 0];
+$recentTransactions = $dashboardData['recentTransactions'] ?? [];
+$budgetRows = array_values(array_filter($dashboardData['budgetRows'] ?? [], function ($row) {
+  return ((float) ($row['budget'] ?? 0)) > 0 || ((float) ($row['spent'] ?? 0)) > 0;
+}));
+$months = $dashboardData['months'] ?? [];
+$categorySummary = $dashboardData['categorySummary'] ?? [];
+$totalExpense = 0;
+foreach ($categorySummary as $category) {
+  $totalExpense += (float) ($category['spent'] ?? 0);
+}
+$topCategories = array_values(array_filter($categorySummary, function ($category) {
+  return ((float) ($category['spent'] ?? 0)) > 0;
+}));
+$topCategories = array_slice($topCategories, 0, 5);
+$displayName = $userName ?: trim(($currentUser['name'] ?? 'User') . ' ' . ($currentUser['lastName'] ?? ''));
+$displayInitials = $userInitials ?: 'U';
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -90,10 +118,14 @@
 
     .sidebar-spacer { flex: 1; }
     .sidebar-user {
-      display: flex; align-items: center; gap: 10px;
+      display: flex; align-items: center; justify-content:space-between; gap: 10px;
       padding: 14px 22px;
       border-top: 1px solid rgba(255,255,255,.08);
     }
+    .sidebar-user-info { display:flex; flex-direction:column; gap:4px; min-width:0; }
+    .user-name a { color:#fff; text-decoration:none; }
+    .btn-logout { background:var(--yellow); color:#7a5c00; border:none; border-radius:9px; padding:9px 12px; font-family:'Sora',sans-serif; font-weight:700; font-size:.78rem; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; }
+    .btn-logout:hover { opacity:.9; }
     .user-ava {
       width: 36px; height: 36px; border-radius: 50%;
       background: var(--purple); color: #fff;
@@ -123,15 +155,15 @@
       width: 38px; height: 38px; border-radius: 50%;
       background: var(--white); border: 1px solid #e5e7ef;
       display: flex; align-items: center; justify-content: center;
-      cursor: pointer; font-size: 1.1rem; box-shadow: var(--shadow);
+      font-size: 1.1rem; box-shadow: var(--shadow); text-decoration: none; color: var(--text-dark);
     }
     .btn-add {
       background: var(--purple); color: #fff;
       border: none; border-radius: 10px; padding: 10px 18px;
       font-family: 'Sora', sans-serif; font-weight: 700; font-size: .85rem;
-      cursor: pointer; display: flex; align-items: center; gap: 7px;
+      display: inline-flex; align-items: center; gap: 7px;
       box-shadow: 0 4px 14px rgba(124,106,245,.35);
-      transition: opacity .2s, transform .15s;
+      transition: opacity .2s, transform .15s; text-decoration: none;
     }
     .btn-add:hover { opacity: .9; transform: translateY(-1px); }
 
@@ -234,34 +266,35 @@
   </div>
 
   <div class="sidebar-section-label">Main</div>
-  <a class="nav-item active" href="#">
+  <a class="nav-item active" href="<?= htmlspecialchars(userPageUrl('dashboard'), ENT_QUOTES, 'UTF-8') ?>">
     <span class="nav-icon">🏠</span> Dashboard
   </a>
-  <a class="nav-item" href="#">
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('transaction'), ENT_QUOTES, 'UTF-8') ?>">
     <span class="nav-icon">💳</span> Transactions
   </a>
-  <a class="nav-item" href="#">
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('budget'), ENT_QUOTES, 'UTF-8') ?>">
     <span class="nav-icon">🎯</span> Budgets
   </a>
-  <a class="nav-item" href="#">
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('category'), ENT_QUOTES, 'UTF-8') ?>">
     <span class="nav-icon">🗂️</span> Categories
   </a>
 
   <div class="sidebar-section-label" style="margin-top:18px;">Collaboration</div>
-  <a class="nav-item" href="#">
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('group'), ENT_QUOTES, 'UTF-8') ?>">
     <span class="nav-icon">👥</span> My Groups
   </a>
-  <a class="nav-item" href="#">
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('alert'), ENT_QUOTES, 'UTF-8') ?>">
     <span class="nav-icon">🔔</span> Alerts
   </a>
 
   <div class="sidebar-spacer"></div>
   <div class="sidebar-user">
-    <div class="user-ava">KM</div>
-    <div>
-      <div class="user-name">Karim M.</div>
-      <div class="user-plan">Free plan</div>
+    <div class="user-ava"><?= htmlspecialchars($displayInitials, ENT_QUOTES, 'UTF-8') ?></div>
+    <div class="sidebar-user-info">
+      <div class="user-name"><a href="<?= htmlspecialchars(userPageUrl('profile'), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') ?></a></div>
+      <div class="user-plan"><?= htmlspecialchars(($currentUser['role'] ?? 'user') . ' plan', ENT_QUOTES, 'UTF-8') ?></div>
     </div>
+    <a class="btn-logout" href="<?= htmlspecialchars(userPageUrl('logout'), ENT_QUOTES, 'UTF-8') ?>">Logout</a>
   </div>
 </aside>
 
@@ -271,12 +304,12 @@
   <!-- Topbar -->
   <div class="topbar">
     <div>
-      <h1>Welcome back, Karim</h1>
+      <h1>Welcome back, <?= htmlspecialchars(explode(' ', trim($displayName))[0] ?? 'User', ENT_QUOTES, 'UTF-8') ?></h1>
       <p>Here's your financial overview</p>
     </div>
     <div class="topbar-right">
-      <div class="btn-notif">🔔</div>
-      <button class="btn-add">＋ Add Transaction</button>
+      <a class="btn-notif" href="<?= htmlspecialchars(userPageUrl('alert'), ENT_QUOTES, 'UTF-8') ?>" title="View alerts">🔔</a>
+      <a class="btn-add" href="<?= htmlspecialchars(userPageUrl('transaction'), ENT_QUOTES, 'UTF-8') ?>">＋ Add Transaction</a>
     </div>
   </div>
 
@@ -284,15 +317,15 @@
   <div class="stat-row">
     <div class="stat-card card-balance">
       <div class="stat-label"><span class="stat-icon">💜</span> Total Balance</div>
-      <div class="stat-value">4280 TND</div>
+      <div class="stat-value"><?= number_format((float) $summary['balance'], 0, '.', ',') ?> TND</div>
     </div>
     <div class="stat-card card-income">
       <div class="stat-label"><span class="stat-icon">💚</span> Total Income</div>
-      <div class="stat-value">6230 TND</div>
+      <div class="stat-value"><?= number_format((float) $summary['income'], 0, '.', ',') ?> TND</div>
     </div>
     <div class="stat-card card-expenses">
       <div class="stat-label"><span class="stat-icon">❤️</span> Total Expenses</div>
-      <div class="stat-value">2485 TND</div>
+      <div class="stat-value"><?= number_format((float) $summary['expenses'], 0, '.', ',') ?> TND</div>
     </div>
   </div>
 
@@ -305,13 +338,35 @@
         <div class="leg"><div class="leg-dot" style="background:var(--purple)"></div>Income</div>
         <div class="leg"><div class="leg-dot" style="background:var(--red)"></div>Expenses</div>
       </div>
+      <?php
+        if (empty($months)) {
+          $months = [];
+          for ($m = 5; $m >= 0; $m--) {
+            $months[] = ['monthLabel' => date('M', strtotime("-{$m} months")), 'income' => 0, 'expenses' => 0];
+          }
+        }
+
+        $maxValue = 1;
+        foreach ($months as $month) {
+          $maxValue = max($maxValue, (float) ($month['income'] ?? 0), (float) ($month['expenses'] ?? 0));
+        }
+      ?>
       <div class="bar-chart">
-        <div class="bc-group"><div class="bc-bar bc-income" style="height:55%"></div><div class="bc-bar bc-expense" style="height:40%"></div></div>
-        <div class="bc-group"><div class="bc-bar bc-income" style="height:70%"></div><div class="bc-bar bc-expense" style="height:50%"></div></div>
-        <div class="bc-group"><div class="bc-bar bc-income" style="height:60%"></div><div class="bc-bar bc-expense" style="height:38%"></div></div>
-        <div class="bc-group"><div class="bc-bar bc-income" style="height:85%"></div><div class="bc-bar bc-expense" style="height:60%"></div></div>
-        <div class="bc-group"><div class="bc-bar bc-income" style="height:75%"></div><div class="bc-bar bc-expense" style="height:55%"></div></div>
-        <div class="bc-group"><div class="bc-bar bc-income" style="height:90%"></div><div class="bc-bar bc-expense" style="height:65%"></div></div>
+        <?php foreach ($months as $month): ?>
+          <?php
+            $income = (float) ($month['income'] ?? 0);
+            $expense = (float) ($month['expenses'] ?? 0);
+            $incomeHeight = (int) round(($income / $maxValue) * 100);
+            $expenseHeight = (int) round(($expense / $maxValue) * 100);
+          ?>
+          <div class="bc-group">
+            <div class="bc-bars">
+              <div class="bc-bar bc-income" style="height:<?= $incomeHeight ?>%"></div>
+              <div class="bc-bar bc-expense" style="height:<?= $expenseHeight ?>%"></div>
+            </div>
+            <div class="bc-label"><?= htmlspecialchars($month['monthLabel'], ENT_QUOTES, 'UTF-8') ?></div>
+          </div>
+        <?php endforeach; ?>
       </div>
     </div>
 
@@ -319,31 +374,43 @@
     <div class="chart-card">
       <h4>Spending by category</h4>
       <div class="donut-wrap">
+        <?php
+          $donutRadius = 46;
+          $donutCircumference = 2 * pi() * $donutRadius;
+          $dashOffset = 0;
+          $donutCategories = $topCategories;
+          if ($totalExpense > 0 && count($donutCategories) < 5 && $totalExpense > array_sum(array_map(fn($cat) => (float) ($cat['spent'] ?? 0), $donutCategories))) {
+            $otherAmount = $totalExpense - array_sum(array_map(fn($cat) => (float) ($cat['spent'] ?? 0), $donutCategories));
+            if ($otherAmount > 0) {
+              $donutCategories[] = ['name' => 'Other', 'spent' => $otherAmount];
+            }
+          }
+          $donutCategories = array_values($donutCategories);
+          if (empty($donutCategories)) {
+            $donutCategories = [['name' => 'No expenses', 'spent' => 1]];
+          }
+        ?>
         <svg class="donut-svg" width="120" height="120" viewBox="0 0 120 120">
           <circle cx="60" cy="60" r="46" fill="none" stroke="#f0edff" stroke-width="18"/>
-          <!-- segments approximated via stroke-dasharray on a circumference ~289 -->
-          <circle cx="60" cy="60" r="46" fill="none" stroke="#ff6b8a" stroke-width="18"
-            stroke-dasharray="58 231" stroke-dashoffset="0" transform="rotate(-90 60 60)"/>
-          <circle cx="60" cy="60" r="46" fill="none" stroke="#4c9be8" stroke-width="18"
-            stroke-dasharray="52 237" stroke-dashoffset="-58" transform="rotate(-90 60 60)"/>
-          <circle cx="60" cy="60" r="46" fill="none" stroke="#7c6af5" stroke-width="18"
-            stroke-dasharray="62 227" stroke-dashoffset="-110" transform="rotate(-90 60 60)"/>
-          <circle cx="60" cy="60" r="46" fill="none" stroke="#f5c842" stroke-width="18"
-            stroke-dasharray="46 243" stroke-dashoffset="-172" transform="rotate(-90 60 60)"/>
-          <circle cx="60" cy="60" r="46" fill="none" stroke="#00c9a7" stroke-width="18"
-            stroke-dasharray="40 249" stroke-dashoffset="-218" transform="rotate(-90 60 60)"/>
-          <circle cx="60" cy="60" r="46" fill="none" stroke="#ff7c3e" stroke-width="18"
-            stroke-dasharray="31 258" stroke-dashoffset="-258" transform="rotate(-90 60 60)"/>
-          <text x="60" y="57" text-anchor="middle" font-family="Sora,sans-serif" font-size="9" font-weight="700" fill="#555">Total</text>
-          <text x="60" y="69" text-anchor="middle" font-family="Sora,sans-serif" font-size="11" font-weight="800" fill="#1a1a2e">6230</text>
+          <?php foreach ($donutCategories as $index => $category): ?>
+            <?php
+              $spent = (float) ($category['spent'] ?? 0);
+              $segment = min(100, $totalExpense > 0 ? ($spent / max(1, $totalExpense)) * 100 : 100);
+              $dash = ($segment / 100) * $donutCircumference;
+              $color = ['#ff6b8a', '#4c9be8', '#7c6af5', '#f5c842', '#00c9a7', '#ff7c3e'][$index % 6];
+              $dashStyle = $dash > 0 ? sprintf('%s %s', round($dash, 2), round(max(0, $donutCircumference - $dash), 2)) : '0 ' . round($donutCircumference, 2);
+            ?>
+            <circle cx="60" cy="60" r="46" fill="none" stroke="<?= $color ?>" stroke-width="18" stroke-dasharray="<?= $dashStyle ?>" stroke-dashoffset="-<?= round($dashOffset, 2) ?>" transform="rotate(-90 60 60)"/>
+            <?php $dashOffset += $dash; ?>
+          <?php endforeach; ?>
+          <text x="60" y="57" text-anchor="middle" font-family="Sora,sans-serif" font-size="9" font-weight="700" fill="#555">Expenses</text>
+          <text x="60" y="69" text-anchor="middle" font-family="Sora,sans-serif" font-size="11" font-weight="800" fill="#1a1a2e"><?= htmlspecialchars(number_format($totalExpense, 0, '.', ','), ENT_QUOTES, 'UTF-8') ?></text>
         </svg>
         <div class="donut-legend">
-          <div class="donut-leg-item"><div class="donut-leg-dot" style="background:#ff6b8a"></div>Health</div>
-          <div class="donut-leg-item"><div class="donut-leg-dot" style="background:#4c9be8"></div>Transport</div>
-          <div class="donut-leg-item"><div class="donut-leg-dot" style="background:#7c6af5"></div>Housing</div>
-          <div class="donut-leg-item"><div class="donut-leg-dot" style="background:#f5c842"></div>Food</div>
-          <div class="donut-leg-item"><div class="donut-leg-dot" style="background:#00c9a7"></div>Travelling</div>
-          <div class="donut-leg-item"><div class="donut-leg-dot" style="background:#ff7c3e"></div>Other</div>
+          <?php foreach ($donutCategories as $index => $category): ?>
+            <?php $color = ['#ff6b8a', '#4c9be8', '#7c6af5', '#f5c842', '#00c9a7', '#ff7c3e'][$index % 6]; ?>
+            <div class="donut-leg-item"><div class="donut-leg-dot" style="background:<?= $color ?>"></div><?= htmlspecialchars($category['name'] ?? 'Category', ENT_QUOTES, 'UTF-8') ?></div>
+          <?php endforeach; ?>
         </div>
       </div>
     </div>
@@ -353,37 +420,38 @@
   <div class="section-card">
     <div class="section-header">
       <h3>Recent Transactions</h3>
-      <a href="#">See all →</a>
+      <a href="<?= htmlspecialchars(userPageUrl('transaction'), ENT_QUOTES, 'UTF-8') ?>">See all →</a>
     </div>
     <div class="tx-list">
-      <div class="tx-item">
-        <div class="tx-left">
-          <div class="tx-ava" style="background:#fff0f3">🛒</div>
-          <span class="tx-name">Store</span>
+      <?php if (empty($recentTransactions)): ?>
+        <div class="tx-item">
+          <div class="tx-left">
+            <div class="tx-ava" style="background:#f5f6fc">·</div>
+            <span class="tx-name">No transactions yet</span>
+          </div>
+          <span class="tx-amount tx-neg">0 TND</span>
         </div>
-        <span class="tx-amount tx-neg">-20 TND</span>
-      </div>
-      <div class="tx-item">
-        <div class="tx-left">
-          <div class="tx-ava" style="background:#e6faf6">💼</div>
-          <span class="tx-name">Salary</span>
-        </div>
-        <span class="tx-amount tx-pos">+1500 TND</span>
-      </div>
-      <div class="tx-item">
-        <div class="tx-left">
-          <div class="tx-ava" style="background:#fff0f3">💊</div>
-          <span class="tx-name">Pharmacy</span>
-        </div>
-        <span class="tx-amount tx-neg">-50 TND</span>
-      </div>
-      <div class="tx-item">
-        <div class="tx-left">
-          <div class="tx-ava" style="background:#fff8e6">☕</div>
-          <span class="tx-name">Coffee</span>
-        </div>
-        <span class="tx-amount tx-neg">-10 TND</span>
-      </div>
+      <?php else: ?>
+        <?php foreach (array_slice($recentTransactions, 0, 4) as $transaction): ?>
+          <?php
+            $isIncome = strtoupper((string) ($transaction['transCategory'] ?? '')) === 'INCOME';
+            $amount = (float) ($transaction['amout'] ?? 0);
+            $title = $transaction['description'] ?: ($transaction['categoryName'] ?: 'Transaction');
+            $subtitle = $transaction['note'] ?: ($transaction['categoryName'] ?? '');
+            $icon = userCategoryIcon($transaction['categoryName'] ?? $transaction['description'] ?? 'Transaction');
+          ?>
+          <div class="tx-item">
+            <div class="tx-left">
+              <div class="tx-ava" style="background:<?= $isIncome ? '#e6faf6' : '#fff0f3' ?>"><?= htmlspecialchars($icon, ENT_QUOTES, 'UTF-8') ?></div>
+              <div>
+                <div class="tx-name"><?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?></div>
+                <div class="tx-desc" style="font-size:.75rem;color:var(--text-muted)"><?= htmlspecialchars($subtitle, ENT_QUOTES, 'UTF-8') ?></div>
+              </div>
+            </div>
+            <span class="tx-amount <?= $isIncome ? 'tx-pos' : 'tx-neg' ?>"><?= $isIncome ? '+' : '-' ?><?= number_format($amount, 0, '.', ',') ?> TND</span>
+          </div>
+        <?php endforeach; ?>
+      <?php endif; ?>
     </div>
   </div>
 
@@ -391,44 +459,34 @@
   <div class="section-card">
     <div class="section-header">
       <h3>Budget Progress</h3>
-      <a href="#" style="color:var(--purple)">Manage →</a>
+      <a href="<?= htmlspecialchars(userPageUrl('budget'), ENT_QUOTES, 'UTF-8') ?>" style="color:var(--purple)">Manage →</a>
     </div>
     <div class="budget-list">
-      <div class="budget-row">
-        <div class="budget-meta">
-          <div class="budget-name"><div class="budget-dot" style="background:#ff6b8a"></div>Food</div>
-          <div class="budget-amounts">80 TND – 100 TND</div>
+      <?php if (empty($budgetRows)): ?>
+        <div class="budget-row">
+          <div class="budget-meta">
+            <div class="budget-name"><div class="budget-dot" style="background:#c8beff"></div>No budgets yet</div>
+            <div class="budget-amounts">0 TND – 0 TND</div>
+          </div>
+          <div class="prog-bg"><div class="prog-fill" style="width:0%; background:#c8beff"></div></div>
         </div>
-        <div class="prog-bg"><div class="prog-fill" style="width:80%; background:#ff6b8a"></div></div>
-      </div>
-      <div class="budget-row">
-        <div class="budget-meta">
-          <div class="budget-name"><div class="budget-dot" style="background:#f5c842"></div>Transport</div>
-          <div class="budget-amounts">70 TND – 100 TND</div>
-        </div>
-        <div class="prog-bg"><div class="prog-fill" style="width:70%; background:#f5c842"></div></div>
-      </div>
-      <div class="budget-row">
-        <div class="budget-meta">
-          <div class="budget-name"><div class="budget-dot" style="background:#4c9be8"></div>Housing</div>
-          <div class="budget-amounts">75 TND – 100 TND</div>
-        </div>
-        <div class="prog-bg"><div class="prog-fill" style="width:75%; background:#4c9be8"></div></div>
-      </div>
-      <div class="budget-row">
-        <div class="budget-meta">
-          <div class="budget-name"><div class="budget-dot" style="background:#00c9a7"></div>Health</div>
-          <div class="budget-amounts">90 TND – 150 TND</div>
-        </div>
-        <div class="prog-bg"><div class="prog-fill" style="width:60%; background:#00c9a7"></div></div>
-      </div>
-      <div class="budget-row">
-        <div class="budget-meta">
-          <div class="budget-name"><div class="budget-dot" style="background:#7c6af5"></div>Coffee</div>
-          <div class="budget-amounts">40 TND – 50 TND</div>
-        </div>
-        <div class="prog-bg"><div class="prog-fill" style="width:80%; background:#7c6af5"></div></div>
-      </div>
+      <?php else: ?>
+        <?php foreach (array_slice($budgetRows, 0, 5) as $index => $row): ?>
+          <?php
+            $budget = (float) ($row['budget'] ?? 0);
+            $spent = (float) ($row['spent'] ?? 0);
+            $percent = $budget > 0 ? min(100, (int) round(($spent / $budget) * 100)) : 0;
+            $color = userCategoryColor($index);
+          ?>
+          <div class="budget-row">
+            <div class="budget-meta">
+              <div class="budget-name"><div class="budget-dot" style="background:<?= $color ?>"></div><?= htmlspecialchars($row['name'] ?? 'Category', ENT_QUOTES, 'UTF-8') ?></div>
+              <div class="budget-amounts"><?= number_format($spent, 0, '.', ',') ?> TND – <?= number_format($budget, 0, '.', ',') ?> TND</div>
+            </div>
+            <div class="prog-bg"><div class="prog-fill" style="width:<?= $percent ?>%; background:<?= $color ?>"></div></div>
+          </div>
+        <?php endforeach; ?>
+      <?php endif; ?>
     </div>
   </div>
 

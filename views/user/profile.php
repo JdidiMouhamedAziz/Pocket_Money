@@ -1,3 +1,44 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+  session_start();
+}
+
+require_once __DIR__ . '/shared.php';
+require_once __DIR__ . '/../../models/User.php';
+
+$currentUserId = $currentUser['id'] ?? ($_SESSION['user']['id'] ?? null);
+$profileData = userProfilePageData($currentUserId);
+$profile = $profileData['profile'] ?? [];
+$summary = $profileData['summary'] ?? ['transactions' => 0];
+$displayName = trim(($profile['name'] ?? $currentUser['name'] ?? 'User') . ' ' . ($profile['lastName'] ?? $currentUser['lastName'] ?? ''));
+$displayInitials = $userInitials ?: 'U';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['crud_action'])) {
+  $userModel = new User($pdo);
+
+  if ($_POST['crud_action'] === 'updateProfile') {
+    $name = trim($_POST['name'] ?? '');
+    $lastName = trim($_POST['lastName'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $password = trim($_POST['password'] ?? '');
+
+    if ($name && $lastName && $email) {
+      $userModel->updateUser($currentUserId, $name, $lastName, $email, $password !== '' ? $password : null);
+      $_SESSION['user'] = $userModel->findUserById($currentUserId) ?: $_SESSION['user'];
+    }
+
+    header('Location: ' . userPageUrl('profile'));
+    exit;
+  }
+
+  if ($_POST['crud_action'] === 'deleteAccount') {
+    $userModel->softDeleteUser($currentUserId);
+    session_destroy();
+    header('Location: /pocket_money/views/login.php');
+    exit;
+  }
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -22,7 +63,11 @@
     .nav-item.active{background:var(--purple);color:#fff;font-weight:700;border-radius:10px;margin:0 10px;padding:11px 12px;}
     .nav-icon{font-size:1rem;width:20px;text-align:center;}
     .sidebar-spacer{flex:1;}
-    .sidebar-user{display:flex;align-items:center;gap:10px;padding:14px 22px;border-top:1px solid rgba(255,255,255,.08);}
+    .sidebar-user{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 22px;border-top:1px solid rgba(255,255,255,.08);}
+    .sidebar-user-info{display:flex;flex-direction:column;gap:4px;min-width:0;}
+    .user-name a{color:#fff;text-decoration:none;}
+    .btn-logout{background:var(--yellow);color:#7a5c00;border:none;border-radius:9px;padding:9px 12px;font-family:'Sora',sans-serif;font-weight:700;font-size:.78rem;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;}
+    .btn-logout:hover{opacity:.9;}
     .user-ava{width:36px;height:36px;border-radius:50%;background:var(--purple);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;flex-shrink:0;}
     .user-name{font-size:.85rem;font-weight:600;color:#fff;}
     .user-plan{font-size:.72rem;color:var(--sidebar-label);}
@@ -40,7 +85,6 @@
     .profile-card{background:#2d2d3a;border-radius:var(--card-radius);padding:28px 20px;display:flex;flex-direction:column;align-items:center;text-align:center;box-shadow:var(--shadow);}
     .profile-ava-wrap{position:relative;margin-bottom:16px;}
     .profile-ava{width:90px;height:90px;border-radius:50%;background:var(--purple);display:flex;align-items:center;justify-content:center;font-family:'Sora',sans-serif;font-size:2rem;font-weight:800;color:#fff;}
-    .ava-edit{position:absolute;bottom:4px;right:4px;width:24px;height:24px;border-radius:50%;background:var(--teal);border:2px solid #2d2d3a;display:flex;align-items:center;justify-content:center;font-size:.7rem;cursor:pointer;}
     .profile-name{font-family:'Sora',sans-serif;font-size:1.1rem;font-weight:700;color:#fff;margin-bottom:4px;}
     .profile-email{font-size:.8rem;color:var(--sidebar-text);margin-bottom:16px;}
     .status-pill{background:rgba(0,201,167,.15);border:1px solid var(--teal);color:var(--teal);border-radius:50px;padding:5px 14px;font-size:.78rem;font-weight:600;display:flex;align-items:center;gap:6px;margin-bottom:24px;}
@@ -81,42 +125,49 @@
 <aside class="sidebar">
   <div class="sidebar-logo"><div class="logo-icon"><span>$</span></div><h2>Finzo</h2></div>
   <div class="sidebar-section-label">Main</div>
-  <a class="nav-item" href="#"><span class="nav-icon">🏠</span> Dashboard</a>
-  <a class="nav-item" href="#"><span class="nav-icon">💳</span> Transactions</a>
-  <a class="nav-item" href="#"><span class="nav-icon">🎯</span> Budgets</a>
-  <a class="nav-item" href="#"><span class="nav-icon">🗂️</span> Categories</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('dashboard'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🏠</span> Dashboard</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('transaction'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">💳</span> Transactions</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('budget'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🎯</span> Budgets</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('category'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🗂️</span> Categories</a>
   <div class="sidebar-section-label" style="margin-top:18px;">Collaboration</div>
-  <a class="nav-item" href="#"><span class="nav-icon">👥</span> My Groups</a>
-  <a class="nav-item" href="#"><span class="nav-icon">🔔</span> Alerts</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('group'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">👥</span> My Groups</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('alert'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🔔</span> Alerts</a>
   <div class="sidebar-spacer"></div>
-  <div class="sidebar-user"><div class="user-ava">KM</div><div><div class="user-name">Karim M.</div><div class="user-plan">Free plan</div></div></div>
+  <div class="sidebar-user">
+    <div class="user-ava"><?= htmlspecialchars($displayInitials, ENT_QUOTES, 'UTF-8') ?></div>
+    <div class="sidebar-user-info">
+      <div class="user-name"><a href="<?= htmlspecialchars(userPageUrl('profile'), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($displayName ?: 'User', ENT_QUOTES, 'UTF-8') ?></a></div>
+      <div class="user-plan"><?= htmlspecialchars(($profile['role'] ?? $currentUser['role'] ?? 'user') . ' plan', ENT_QUOTES, 'UTF-8') ?></div>
+    </div>
+    <a class="btn-logout" href="<?= htmlspecialchars(userPageUrl('logout'), ENT_QUOTES, 'UTF-8') ?>">Logout</a>
+  </div>
 </aside>
 
 <main class="main">
   <div class="topbar">
     <div><h1>My Profile</h1><p>Manage your account and preferences</p></div>
-    <button class="btn-save">✓ Save Changes</button>
+    <button class="btn-save" type="submit" form="profileDetailsForm">✓ Save Changes</button>
   </div>
 
   <div class="profile-layout">
     <!-- Left card -->
     <div class="profile-card">
       <div class="profile-ava-wrap">
-        <div class="profile-ava">KM</div>
-        <div class="ava-edit">✎</div>
+        <div class="profile-ava"><?= htmlspecialchars($displayInitials, ENT_QUOTES, 'UTF-8') ?></div>
       </div>
-      <div class="profile-name">Karim Mansouri</div>
-      <div class="profile-email">karim.m@example.com</div>
-      <div class="status-pill"><span class="status-dot"></span>Active</div>
+      <div class="profile-name"><?= htmlspecialchars($displayName ?: 'User', ENT_QUOTES, 'UTF-8') ?></div>
+      <div class="profile-email"><?= htmlspecialchars($profile['email'] ?? $currentUser['email'] ?? '', ENT_QUOTES, 'UTF-8') ?></div>
+      <div class="status-pill"><span class="status-dot"></span><?= htmlspecialchars(ucfirst($profile['status'] ?? $currentUser['status'] ?? 'active'), ENT_QUOTES, 'UTF-8') ?></div>
       <div class="stat-pills">
-        <div class="stat-pill"><span class="sp-num">47</span><span class="sp-label">Transactions</span></div>
-        <div class="stat-pill teal"><span class="sp-num">5</span><span class="sp-label">Budgets</span></div>
-        <div class="stat-pill orange"><span class="sp-num">3</span><span class="sp-label">Groups</span></div>
+        <div class="stat-pill"><span class="sp-num"><?= (int) ($profile['transactionCount'] ?? 0) ?></span><span class="sp-label">Transactions</span></div>
+        <div class="stat-pill teal"><span class="sp-num"><?= (int) ($profile['budgetCount'] ?? 0) ?></span><span class="sp-label">Budgets</span></div>
+        <div class="stat-pill orange"><span class="sp-num"><?= (int) ($profile['groupCount'] ?? 0) ?></span><span class="sp-label">Groups</span></div>
       </div>
     </div>
 
     <!-- Right: Personal Info -->
-    <div class="info-card">
+    <form class="info-card" method="post" action="<?= htmlspecialchars(userPageUrl('profile'), ENT_QUOTES, 'UTF-8') ?>" id="profileDetailsForm">
+      <input type="hidden" name="crud_action" value="updateProfile"/>
       <div class="info-header">
         <div class="info-icon">👤</div>
         <h3>Personal Information</h3>
@@ -124,24 +175,25 @@
       <div class="field-row">
         <div class="field-icon">👤</div>
         <span class="field-label">Full name</span>
-        <input class="field-input" type="text" value="Karim Mansouri"/>
+        <input class="field-input" type="text" name="name" value="<?= htmlspecialchars($profile['name'] ?? $currentUser['name'] ?? '', ENT_QUOTES, 'UTF-8') ?>"/>
       </div>
       <div class="field-row">
         <div class="field-icon">✉️</div>
         <span class="field-label">Email</span>
-        <input class="field-input" type="email" value="karim.m@example.com"/>
+        <input class="field-input" type="email" name="email" value="<?= htmlspecialchars($profile['email'] ?? $currentUser['email'] ?? '', ENT_QUOTES, 'UTF-8') ?>"/>
       </div>
       <div class="field-row">
         <div class="field-icon">📞</div>
         <span class="field-label">Phone</span>
-        <input class="field-input" type="text" value="+216 ** *** ***"/>
+        <input class="field-input" type="text" value="<?= htmlspecialchars($profile['phone'] ?? '+216 ** *** ***', ENT_QUOTES, 'UTF-8') ?>" readonly/>
       </div>
       <div class="field-row">
         <div class="field-icon">🔒</div>
         <span class="field-label">Password</span>
-        <input class="field-input" type="password" value="password123"/>
+        <input class="field-input" type="password" name="password" value="" placeholder="Enter new password"/>
       </div>
-    </div>
+      <input type="hidden" name="lastName" value="<?= htmlspecialchars($profile['lastName'] ?? $currentUser['lastName'] ?? '', ENT_QUOTES, 'UTF-8') ?>"/>
+    </form>
   </div>
 
   <!-- Danger Zone -->
@@ -152,14 +204,17 @@
         <h4>Log out</h4>
         <p>Sign out of your account on this device</p>
       </div>
-      <button class="btn-logout">Log out</button>
+      <button class="btn-logout" type="button" onclick="window.location.href='<?= htmlspecialchars('/pocket_money/views/logout.php', ENT_QUOTES, 'UTF-8') ?>'">Log out</button>
     </div>
     <div class="danger-row">
       <div class="danger-row-left">
-        <h4>Delete account</h4>
-        <p>Permanently delete all your data</p>
+        <h4>Deactivate account</h4>
+        <p>Mark your account as deleted while keeping data in the system</p>
       </div>
-      <button class="btn-delete">Delete</button>
+      <form method="post" action="<?= htmlspecialchars(userPageUrl('profile'), ENT_QUOTES, 'UTF-8') ?>" onsubmit="return confirm('Are you sure you want to deactivate your account?');">
+        <input type="hidden" name="crud_action" value="deleteAccount"/>
+        <button class="btn-delete" type="submit">Deactivate</button>
+      </form>
     </div>
   </div>
 </main>

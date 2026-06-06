@@ -35,9 +35,16 @@
 
         //find Transaction by user id
         public function findTransactionByUserId($userId){
-            $stmt=$this->pdo->prepare("SELECT * from Transaction WHERE userId=?");
+            $stmt=$this->pdo->prepare("SELECT t.*, bt.budgetId, b.note AS budgetNote, b.`limit` AS budgetLimit FROM transaction t LEFT JOIN budgettransaction bt ON bt.transactionId = t.idTransaction LEFT JOIN budget b ON b.idBudget = bt.budgetId WHERE t.userId=?");
             $stmt->execute([$userId]);
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        // find transaction by id
+        public function findTransactionById($idTransaction){
+            $stmt=$this->pdo->prepare("SELECT t.*, bt.budgetId, b.note AS budgetNote, b.`limit` AS budgetLimit FROM transaction t LEFT JOIN budgettransaction bt ON bt.transactionId = t.idTransaction LEFT JOIN budget b ON b.idBudget = bt.budgetId WHERE t.idTransaction=?");
+            $stmt->execute([$idTransaction]);
+            return $stmt->fetch(PDO::FETCH_ASSOC);
         }
 
         // find transaction by categoryid
@@ -45,6 +52,18 @@
             $stmt=$this->pdo->prepare("SELECT * FROM transaction WHERE categoryId=?");
             $stmt->execute([$categoryId]);
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        // update transaction
+        public function updateTransaction($idTransaction,$description,$transCategory,$date,$note,$amout,$transType,$categoryId){
+            $stmt = $this->pdo->prepare("UPDATE transaction SET description=?, transCategory=?, date=?, note=?, amout=?, transType=?, categoryId=? WHERE idTransaction=?");
+            return $stmt->execute([$description,$transCategory,$date,$note,$amout,$transType,$categoryId,$idTransaction]);
+        }
+
+        // delete transaction
+        public function deleteTransaction($idTransaction){
+            $stmt = $this->pdo->prepare("DELETE FROM transaction WHERE idTransaction=?");
+            return $stmt->execute([$idTransaction]);
         }
     }
 

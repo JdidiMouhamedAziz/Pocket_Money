@@ -205,10 +205,10 @@ h5 {
     border-top: 1px solid var(--sidebar-border);
 }
 
-.new-report-btn {
+.btn-logout {
     width: 100%;
-    background: var(--accent);
-    color: #fff;
+    background: var(--yellow);
+    color: #7a5c00;
     border: none;
     border-radius: 9px;
     padding: 10px;
@@ -220,11 +220,11 @@ h5 {
     align-items: center;
     justify-content: center;
     gap: 6px;
+    text-decoration: none;
     transition: opacity .2s;
-    box-shadow: 0 4px 12px rgba(79, 70, 229, .3);
 }
 
-.new-report-btn:hover {
+.btn-logout:hover {
     opacity: .9;
 }
 

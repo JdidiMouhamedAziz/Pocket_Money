@@ -1,3 +1,53 @@
+<?php
+require_once __DIR__ . '/admin_helpers.php';
+
+$adminFlash = getAdminFlash();
+$editBudget = null;
+if (!empty($_GET['editBudget'])) {
+    $stmt = $pdo->prepare(
+        'SELECT b.*, bc.categoryId FROM budget b LEFT JOIN budgetcategory bc ON bc.budgetId = b.idBudget WHERE b.idBudget = ? LIMIT 1'
+    );
+    $stmt->execute([$_GET['editBudget']]);
+    $editBudget = $stmt->fetch(PDO::FETCH_ASSOC);
+}
+$categoryList = $pdo->query('SELECT idCategory, name FROM category ORDER BY name ASC')->fetchAll(PDO::FETCH_ASSOC);
+
+$search = trim($_GET['search'] ?? '');
+$filterCategory = (int) ($_GET['filterCategory'] ?? 0);
+$filterPeriod = trim($_GET['filterPeriod'] ?? '');
+$whereClauses = [];
+$queryParams = [];
+if ($search !== '') {
+    $whereClauses[] = '(b.name LIKE ? OR b.note LIKE ? OR c.name LIKE ?)';
+    $likeSearch = "%{$search}%";
+    $queryParams = array_merge($queryParams, [$likeSearch, $likeSearch, $likeSearch]);
+}
+if ($filterCategory > 0) {
+    $whereClauses[] = 'bc.categoryId = ?';
+    $queryParams[] = $filterCategory;
+}
+if (in_array(strtolower($filterPeriod), ['monthly', 'quarterly', 'yearly'], true)) {
+    $whereClauses[] = 'LOWER(b.period) = ?';
+    $queryParams[] = strtolower($filterPeriod);
+}
+$sql = "SELECT b.*, COALESCE(SUM(t.amout),0) AS spent FROM budget b LEFT JOIN budgettransaction bt ON bt.budgetId=b.idBudget LEFT JOIN transaction t ON t.idTransaction=bt.transactionId AND t.transCategory='EXPENSE' LEFT JOIN budgetcategory bc ON bc.budgetId=b.idBudget LEFT JOIN category c ON c.idCategory=bc.categoryId";
+if ($whereClauses) {
+    $sql .= ' WHERE ' . implode(' AND ', $whereClauses);
+}
+$sql .= ' GROUP BY b.idBudget ORDER BY b.startDate DESC';
+$budgetStmt = $pdo->prepare($sql);
+$budgetStmt->execute($queryParams);
+$budgets = $budgetStmt->fetchAll(PDO::FETCH_ASSOC);
+$totalAllocated = array_reduce($budgets, fn($sum, $item) => $sum + (float) $item['limit'], 0.0);
+$totalSpent = array_reduce($budgets, fn($sum, $item) => $sum + (float) $item['spent'], 0.0);
+$topBudgets = array_slice($budgets, 0, 5);
+$budgetHealth = $totalAllocated > 0 ? min(100, (int) round(($totalSpent / $totalAllocated) * 100)) : 0;
+$recentBudgetStmt = $pdo->prepare(
+    "SELECT t.description, t.amout, t.transCategory, t.date, b.name AS budgetName, u.name AS userName, u.lastName AS userLastName FROM transaction t LEFT JOIN budgettransaction bt ON bt.transactionId = t.idTransaction LEFT JOIN budget b ON b.idBudget = bt.budgetId LEFT JOIN users u ON u.id = t.userId ORDER BY t.date DESC LIMIT 5"
+);
+$recentBudgetStmt->execute();
+$recentTransactions = $recentBudgetStmt->fetchAll(PDO::FETCH_ASSOC);
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -25,25 +75,11 @@
     .nav-item.active .nav-icon{color:var(--accent);}
     .sidebar-spacer{flex:1;}
     .sidebar-footer{padding:12px 14px;border-top:1px solid var(--sidebar-border);}
-    .plan-box{background:#f9fafb;border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;}
-    .plan-label{font-size:.65rem;font-weight:800;color:var(--accent);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;}
-    .plan-bar-bg{background:#e5e7eb;border-radius:50px;height:5px;margin-bottom:6px;}
-    .plan-bar-fill{height:5px;border-radius:50px;background:linear-gradient(90deg,var(--accent),#818cf8);width:72%;}
-    .plan-sub{font-size:.68rem;color:var(--text-muted);}
-    .btn-upgrade{width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px;font-family:'DM Sans',sans-serif;font-size:.78rem;font-weight:700;cursor:pointer;}
+    .btn-logout{width:100%;background:var(--yellow);color:#7a5c00;border:none;border-radius:8px;padding:8px;font-family:'DM Sans',sans-serif;font-size:.78rem;font-weight:700;cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;}
+    .btn-logout:hover{opacity:.9;}
     /* MAIN */
     .main{margin-left:200px;flex:1;display:flex;flex-direction:column;}
-    .topnav{background:var(--white);border-bottom:1px solid var(--border);padding:11px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
-    .topnav-search{display:flex;align-items:center;gap:7px;background:#f3f4f6;border:1px solid var(--border);border-radius:8px;padding:7px 12px;min-width:260px;}
-    .topnav-search input{background:transparent;border:none;outline:none;font-family:'DM Sans',sans-serif;font-size:.83rem;color:var(--text-mid);width:100%;}
-    .topnav-search input::placeholder{color:var(--text-light);}
-    .topnav-right{display:flex;align-items:center;gap:11px;}
-    .notif-btn{width:32px;height:32px;border-radius:50%;background:#f3f4f6;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:.9rem;position:relative;}
-    .notif-dot{position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;background:var(--red);border:2px solid #fff;}
-    .profile-btn{display:flex;align-items:center;gap:7px;cursor:pointer;padding:5px 10px 5px 5px;background:#f3f4f6;border:1px solid var(--border);border-radius:50px;}
-    .profile-ava{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#818cf8);display:flex;align-items:center;justify-content:center;font-size:.62rem;font-weight:700;color:#fff;}
-    .profile-btn span{font-size:.8rem;font-weight:600;color:var(--text-mid);}
-    /* CONTENT */
+    .content{padding:22px 24px;}
     .content{padding:22px 24px;}
     .breadcrumb{display:flex;align-items:center;gap:5px;font-size:.75rem;color:var(--text-muted);margin-bottom:12px;}
     .breadcrumb a{color:var(--text-muted);text-decoration:none;}
@@ -55,6 +91,19 @@
     .page-header h1{font-size:1.4rem;font-weight:800;}
     .page-header p{font-size:.82rem;color:var(--text-muted);margin-top:4px;}
     .btn-create{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-family:'Sora',sans-serif;font-weight:700;font-size:.82rem;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:0 4px 12px rgba(79,70,229,.3);}
+    .admin-flash{background:#eef6ff;border:1px solid #dbeafe;color:#1e40af;border-radius:12px;padding:14px 18px;margin-bottom:18px;font-weight:600;}
+    .admin-flash.error{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
+    .form-card{background:var(--white);border:1px solid var(--border);border-radius:18px;padding:18px;margin-bottom:20px;box-shadow:var(--shadow);}
+    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;}
+    .form-field{display:flex;flex-direction:column;gap:6px;}
+    .form-field.full{grid-column:1/-1;}
+    .form-input{background:#f9fafb;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-family:'DM Sans',sans-serif;font-size:.86rem;color:var(--text-dark);outline:none;}
+    .form-input:focus{border-color:var(--accent);background:#fff;}
+    .form-actions{display:flex;justify-content:flex-end;gap:10px;align-items:center;margin-top:14px;}
+    .btn-submit{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-family:'Sora',sans-serif;font-weight:700;font-size:.85rem;cursor:pointer;}
+    .btn-secondary{background:#f3f4f6;color:var(--text-dark);border:none;border-radius:10px;padding:10px 16px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:.85rem;cursor:pointer;}
+    .action-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:#f3f4f6;color:var(--text-mid);border:1px solid var(--border);font-size:.82rem;cursor:pointer;text-decoration:none;margin-right:6px;}
+    .action-btn:hover{background:#eef2ff;color:var(--accent);}
     /* STAT STRIP */
     .stat-strip{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin-bottom:20px;}
     .stat-strip-item{padding:18px 22px;background:var(--white);border:1px solid var(--border);}
@@ -103,17 +152,10 @@
     .sm-ava:first-child{margin-left:0;}
     /* action required */
     .action-badge{position:absolute;top:12px;right:34px;background:var(--red);color:#fff;font-size:.65rem;font-weight:700;padding:2px 8px;border-radius:5px;}
-    /* add card */
-    .add-budget-card{background:var(--accent-soft);border:2px dashed #c7d2fe;border-radius:var(--radius);display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:180px;cursor:pointer;transition:background .2s;gap:8px;text-align:center;padding:20px;}
-    .add-budget-card:hover{background:#e0e7ff;}
-    .add-plus{width:38px;height:38px;border-radius:10px;background:rgba(79,70,229,.12);border:2px solid #c7d2fe;display:flex;align-items:center;justify-content:center;font-size:1.2rem;color:var(--accent);}
-    .add-budget-card h4{font-size:.88rem;font-weight:700;color:var(--accent);}
-    .add-budget-card p{font-size:.75rem;color:#818cf8;}
     /* RECENT TX */
     .tx-section{background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);}
     .tx-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);}
     .tx-header h3{font-size:.93rem;font-weight:700;}
-    .view-all-link{font-size:.8rem;color:var(--accent);font-weight:600;cursor:pointer;text-decoration:none;}
     table{width:100%;border-collapse:collapse;}
     thead th{font-size:.65rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;padding:9px 20px;text-align:left;background:#fafafa;border-bottom:1px solid var(--border);}
     tbody tr{border-bottom:1px solid #f3f4f6;transition:background .12s;}
@@ -140,67 +182,139 @@
     </div>
   </div>
   <nav class="sidebar-nav">
-    <a class="nav-item" href="#"><span class="nav-icon">📊</span> Dashboard</a>
-    <a class="nav-item" href="#"><span class="nav-icon">👥</span> Users</a>
-    <a class="nav-item active" href="#"><span class="nav-icon">🎯</span> Budgets</a>
-    <a class="nav-item" href="#"><span class="nav-icon">💳</span> Transactions</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🗂️</span> Categories</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🔔</span> Alerts</a>
-    <a class="nav-item" href="#"><span class="nav-icon">⚙️</span> Settings</a>
+    <a class="nav-item" href="dashboard.php"><span class="nav-icon">📊</span> Dashboard</a>
+    <a class="nav-item" href="users.php"><span class="nav-icon">👥</span> Users</a>
+    <a class="nav-item active" href="budgets.php"><span class="nav-icon">🎯</span> Budgets</a>
+    <a class="nav-item" href="transactions.php"><span class="nav-icon">💳</span> Transactions</a>
+    <a class="nav-item" href="categories.php"><span class="nav-icon">🗂️</span> Categories</a>
+    <a class="nav-item" href="alerts.php"><span class="nav-icon">🔔</span> Alerts</a>
+    <a class="nav-item" href="export_data.php"><span class="nav-icon">⬇️</span> Export Data</a>
+    <a class="nav-item" href="profile.php"><span class="nav-icon">⚙️</span> Settings</a>
   </nav>
   <div class="sidebar-spacer"></div>
   <div class="sidebar-footer">
-    <div class="plan-box">
-      <div class="plan-label">PRO PLAN</div>
-      <div class="plan-bar-bg"><div class="plan-bar-fill"></div></div>
-      <div class="plan-sub">72% of your word used</div>
-    </div>
-    <button class="btn-upgrade">Upgrade</button>
+    <a class="btn-logout" href="/pocket_money/views/logout.php">Logout</a>
   </div>
 </aside>
 
 <div class="main">
-  <div class="topnav">
-    <div class="topnav-search">
-      <span style="color:#9ca3af;font-size:.82rem">🔍</span>
-      <input type="text" placeholder="Search budgets, teams, or transactions..."/>
-    </div>
-    <div class="topnav-right">
-      <div class="notif-btn">🔔<div class="notif-dot"></div></div>
-      <div class="profile-btn">
-        <div class="profile-ava">AR</div>
-        <span>Alex Rivera</span>
-        <span style="color:var(--text-light);font-size:.7rem">▾</span>
-      </div>
-    </div>
-  </div>
-
   <div class="content">
     <div class="breadcrumb">
-      <a href="#">Organisation</a><span class="sep">/</span>
+      <span>Organisation</span><span class="sep">/</span>
       <span class="crumb-active">Budgets</span>
     </div>
     <div class="page-header">
       <div><h1>Budget Management</h1><p>Allocate and track fiscal spending across departments.</p></div>
-      <button class="btn-create">✦ Create New Budget</button>
+      <a class="btn-create" href="#budget-form">✦ Create New Budget</a>
+    </div>
+
+    <?php if ($adminFlash): ?>
+      <div class="admin-flash <?= $adminFlash['success'] ? '' : 'error' ?>"><?= htmlspecialchars($adminFlash['message'], ENT_QUOTES, 'UTF-8') ?></div>
+    <?php endif; ?>
+
+    <div class="form-card" style="margin-bottom:20px;">
+      <form method="get" action="budgets.php">
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="budget-search">Search budgets</label>
+            <input class="form-input" id="budget-search" name="search" type="text" value="<?= htmlspecialchars($search, ENT_QUOTES, 'UTF-8') ?>" placeholder="Search by budget or category" />
+          </div>
+          <div class="form-field">
+            <label for="filter-category">Category</label>
+            <select class="form-input" id="filter-category" name="filterCategory">
+              <option value="0">All categories</option>
+              <?php foreach ($categoryList as $category): ?>
+                <option value="<?= htmlspecialchars($category['idCategory'], ENT_QUOTES, 'UTF-8') ?>" <?= $filterCategory === (int)$category['idCategory'] ? 'selected' : '' ?>><?= htmlspecialchars($category['name'], ENT_QUOTES, 'UTF-8') ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="filter-period">Period</label>
+            <select class="form-input" id="filter-period" name="filterPeriod">
+              <option value="">All periods</option>
+              <option value="Monthly" <?= strtolower($filterPeriod) === 'monthly' ? 'selected' : '' ?>>Monthly</option>
+              <option value="Quarterly" <?= strtolower($filterPeriod) === 'quarterly' ? 'selected' : '' ?>>Quarterly</option>
+              <option value="Yearly" <?= strtolower($filterPeriod) === 'yearly' ? 'selected' : '' ?>>Yearly</option>
+            </select>
+          </div>
+          <div class="form-field full" style="display:flex;align-items:flex-end;gap:10px;">
+            <button type="submit" class="btn-submit">Apply filters</button>
+            <a class="btn-secondary" href="budgets.php">Reset</a>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <div id="budget-form" class="form-card">
+      <h3><?= $editBudget ? 'Edit Budget' : 'New Budget' ?></h3>
+      <form method="post" action="admin_actions.php?resource=budget&action=<?= $editBudget ? 'update' : 'create' ?>">
+        <?php if ($editBudget): ?>
+          <input type="hidden" name="id" value="<?= htmlspecialchars($editBudget['idBudget'], ENT_QUOTES, 'UTF-8') ?>"/>
+        <?php endif; ?>
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="budget-name">Budget Name</label>
+            <input class="form-input" id="budget-name" name="name" type="text" value="<?= htmlspecialchars($editBudget['name'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required/>
+          </div>
+          <div class="form-field">
+            <label for="budget-limit">Limit</label>
+            <input class="form-input" id="budget-limit" name="limit" type="number" step="0.01" value="<?= htmlspecialchars($editBudget['limit'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required/>
+          </div>
+          <div class="form-field">
+            <label for="budget-period">Period</label>
+            <select class="form-input" id="budget-period" name="period">
+              <option value="Monthly" <?= isset($editBudget['period']) && $editBudget['period'] === 'Monthly' ? 'selected' : '' ?>>Monthly</option>
+              <option value="Quarterly" <?= isset($editBudget['period']) && $editBudget['period'] === 'Quarterly' ? 'selected' : '' ?>>Quarterly</option>
+              <option value="Yearly" <?= isset($editBudget['period']) && $editBudget['period'] === 'Yearly' ? 'selected' : '' ?>>Yearly</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="budget-category">Category</label>
+            <select class="form-input" id="budget-category" name="categoryId" required>
+              <option value="">Select category</option>
+              <?php foreach ($categoryList as $category): ?>
+                <option value="<?= htmlspecialchars($category['idCategory'], ENT_QUOTES, 'UTF-8') ?>" <?= isset($editBudget['categoryId']) && $editBudget['categoryId'] == $category['idCategory'] ? 'selected' : '' ?>><?= htmlspecialchars($category['name'], ENT_QUOTES, 'UTF-8') ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="budget-start">Start Date</label>
+            <input class="form-input" id="budget-start" name="startDate" type="date" value="<?= htmlspecialchars($editBudget['startDate'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required/>
+          </div>
+          <div class="form-field">
+            <label for="budget-alert">Alert Threshold</label>
+            <input class="form-input" id="budget-alert" name="sendAlertAt" type="number" min="0" max="100" value="<?= htmlspecialchars($editBudget['sendAlertAt'] ?? '', ENT_QUOTES, 'UTF-8') ?>" placeholder="90"/>
+          </div>
+          <div class="form-field full">
+            <label for="budget-note">Note</label>
+            <textarea class="form-input" id="budget-note" name="note" rows="3"><?= htmlspecialchars($editBudget['note'] ?? '', ENT_QUOTES, 'UTF-8') ?></textarea>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-submit"><?= $editBudget ? 'Save Budget' : 'Create Budget' ?></button>
+          <?php if ($editBudget): ?>
+            <a href="budgets.php" class="btn-secondary">Cancel</a>
+          <?php endif; ?>
+        </div>
+      </form>
     </div>
 
     <!-- STAT STRIP -->
     <div class="stat-strip" style="box-shadow:var(--shadow);border-radius:var(--radius);overflow:hidden;margin-bottom:20px;">
       <div class="stat-strip-item">
         <div class="ss-label">Total Allocated</div>
-        <div class="ss-value">$245,000.00</div>
-        <div class="ss-sub"><span class="ss-green">▲ +12%</span> from last month</div>
+        <div class="ss-value"><?= htmlspecialchars(formatCurrency($totalAllocated), ENT_QUOTES, 'UTF-8') ?></div>
+        <div class="ss-sub"><span class="ss-green">▲ Live total</span></div>
       </div>
       <div class="stat-strip-item">
         <div class="ss-label">Spent to Date</div>
-        <div class="ss-value">$168,430.50</div>
-        <div class="ss-sub"><span class="ss-red">68.7%</span> of total budget utilized</div>
+        <div class="ss-value"><?= htmlspecialchars(formatCurrency($totalSpent), ENT_QUOTES, 'UTF-8') ?></div>
+        <div class="ss-sub"><span class="ss-red"><?= htmlspecialchars($budgetHealth, ENT_QUOTES, 'UTF-8') ?>%</span> of total budget utilized</div>
       </div>
       <div class="stat-strip-item">
         <div class="health-label">Budget Health</div>
-        <div class="health-title">Optimal Efficiency</div>
-        <div class="health-sub">8 active collaborators</div>
+        <div class="health-title"><?= $budgetHealth >= 80 ? 'Healthy' : ($budgetHealth >= 50 ? 'At Risk' : 'Review Needed') ?></div>
+        <div class="health-sub"><?= htmlspecialchars(count($budgets) . ' budgets', ENT_QUOTES, 'UTF-8') ?></div>
         <div class="health-avatars">
           <div class="h-ava" style="background:#4f46e5">SC</div>
           <div class="h-ava" style="background:#059669">MK</div>
@@ -212,129 +326,74 @@
 
     <!-- BUDGET CARDS -->
     <div class="budget-grid">
-      <!-- Marketing Q3 -->
-      <div class="budget-card">
-        <div class="bc-top">
-          <div class="bc-icon bi-yellow">📣</div>
-          <button class="bc-menu">⋯</button>
-        </div>
-        <div class="bc-title">Marketing Q3</div>
-        <div class="bc-desc">Global brand awareness campaign</div>
-        <div class="bc-amounts"><span class="bc-spent">$14,200</span><span class="bc-total">/ $45,000</span></div>
-        <div class="prog-bg"><div class="prog-fill" style="width:31.5%;background:#f59e0b"></div></div>
-        <div class="bc-footer">
-          <div style="display:flex;align-items:center;">
-            <div class="member-avas">
-              <div class="sm-ava" style="background:#4f46e5">SC</div>
-              <div class="sm-ava" style="background:#059669">MK</div>
-              <div class="sm-ava" style="background:#ef4444">+1</div>
-            </div>
+      <?php foreach ($topBudgets as $index => $budget):
+        $spent = (float) $budget['spent'];
+        $limit = (float) $budget['limit'];
+        $pct = $limit > 0 ? min(100, (int) round(($spent / $limit) * 100)) : 0;
+        $badgeClass = progressClass($pct);
+        $icon = ['📣','✈️','🏗️','🧪','🏢'][$index % 5];
+      ?>
+        <div class="budget-card">
+          <?php if ($pct >= 100): ?><div class="action-badge">Action Required</div><?php endif; ?>
+          <div class="bc-top">
+            <div class="bc-icon" style="background:<?= htmlspecialchars(categoryStyle($index) . '33', ENT_QUOTES, 'UTF-8') ?>;color:<?= htmlspecialchars(categoryStyle($index), ENT_QUOTES, 'UTF-8') ?>;"><?= $icon ?></div>
+            <button class="bc-menu">⋯</button>
           </div>
-          <span class="pct-badge pb-green">31.5%</span>
-          <span class="update-time">Updated 2h ago</span>
-        </div>
-      </div>
-
-      <!-- Team Offsite -->
-      <div class="budget-card">
-        <div class="bc-top">
-          <div class="bc-icon bi-blue">✈️</div>
-          <button class="bc-menu">⋯</button>
-        </div>
-        <div class="bc-title">Team Offsite</div>
-        <div class="bc-desc">Annual strategy retreat in Tokyo.</div>
-        <div class="bc-amounts"><span class="bc-spent">$12,450</span><span class="bc-total">/ $15,000</span></div>
-        <div class="prog-bg"><div class="prog-fill" style="width:83%;background:#3b82f6"></div></div>
-        <div class="bc-footer">
-          <div style="display:flex;align-items:center;">
-            <div class="member-avas">
-              <div class="sm-ava" style="background:#4f46e5">JD</div>
-              <div class="sm-ava" style="background:#f59e0b">ER</div>
-            </div>
+          <div class="bc-title"><?= htmlspecialchars($budget['name'] ?: 'Unnamed Budget', ENT_QUOTES, 'UTF-8') ?></div>
+          <div class="bc-desc"><?= htmlspecialchars($budget['note'] ?: 'Budget details', ENT_QUOTES, 'UTF-8') ?></div>
+          <div class="bc-amounts"><span class="bc-spent"><?= htmlspecialchars(formatCurrency($spent), ENT_QUOTES, 'UTF-8') ?></span><span class="bc-total">/ <?= htmlspecialchars(formatCurrency($limit), ENT_QUOTES, 'UTF-8') ?></span></div>
+          <div class="prog-bg"><div class="prog-fill" style="width:<?= $pct ?>%;background:<?= htmlspecialchars(categoryStyle($index), ENT_QUOTES, 'UTF-8') ?>"></div></div>
+          <div class="bc-footer">
+            <div style="display:flex;align-items:center;"><div class="member-avas"><div class="sm-ava" style="background:<?= htmlspecialchars(categoryStyle($index), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars(substr($budget['name'] ?: 'B', 0, 2), ENT_QUOTES, 'UTF-8') ?></div></div></div>
+            <span class="pct-badge <?= $badgeClass ?>"><?= htmlspecialchars($pct, ENT_QUOTES, 'UTF-8') ?>%</span>
+            <span class="update-time"><?= htmlspecialchars(relativeTime($budget['startDate'] ?? ''), ENT_QUOTES, 'UTF-8') ?></span>
           </div>
-          <span class="pct-badge pb-orange">83%</span>
-          <span class="update-time">Updated 1h ago</span>
         </div>
-      </div>
+      <?php endforeach; ?>
+    </div>
 
-      <!-- Infrastructure -->
-      <div class="budget-card">
-        <div class="action-badge">Action Required</div>
-        <div class="bc-top">
-          <div class="bc-icon bi-red">🏗️</div>
-          <button class="bc-menu">⋯</button>
-        </div>
-        <div class="bc-title">Infrastructure</div>
-        <div class="bc-desc">Cloud services & hosting costs.</div>
-        <div class="bc-amounts"><span class="bc-spent">$105,200</span><span class="bc-total">/ $100,000</span></div>
-        <div class="prog-bg"><div class="prog-fill" style="width:100%;background:#ef4444"></div></div>
-        <div class="bc-footer">
-          <div style="display:flex;align-items:center;">
-            <div class="member-avas">
-              <div class="sm-ava" style="background:#6366f1">RK</div>
-            </div>
-          </div>
-          <span class="pct-badge pb-red">105%</span>
-          <span class="update-time">Overbudget</span>
-        </div>
-      </div>
-
-      <!-- Product R&D -->
-      <div class="budget-card">
-        <div class="bc-top">
-          <div class="bc-icon bi-purple">🧪</div>
-          <button class="bc-menu">⋯</button>
-        </div>
-        <div class="bc-title">Product R&D</div>
-        <div class="bc-desc">New feature prototyping phase</div>
-        <div class="bc-amounts"><span class="bc-spent">$28,000</span><span class="bc-total">/ $60,000</span></div>
-        <div class="prog-bg"><div class="prog-fill" style="width:46%;background:#7c3aed"></div></div>
-        <div class="bc-footer">
-          <div style="display:flex;align-items:center;">
-            <div class="member-avas">
-              <div class="sm-ava" style="background:#4f46e5">SC</div>
-              <div class="sm-ava" style="background:#059669">AS</div>
-            </div>
-          </div>
-          <span class="pct-badge pb-green">46%</span>
-          <span class="update-time">Updated yesterday</span>
-        </div>
-      </div>
-
-      <!-- Office Ops -->
-      <div class="budget-card">
-        <div class="bc-top">
-          <div class="bc-icon bi-teal">🏢</div>
-          <button class="bc-menu">⋯</button>
-        </div>
-        <div class="bc-title">Office Ops</div>
-        <div class="bc-desc">Supplies, rent and utility management</div>
-        <div class="bc-amounts"><span class="bc-spent">$22,500</span><span class="bc-total">/ $25,000</span></div>
-        <div class="prog-bg"><div class="prog-fill" style="width:90%;background:#059669"></div></div>
-        <div class="bc-footer">
-          <div style="display:flex;align-items:center;">
-            <div class="member-avas">
-              <div class="sm-ava" style="background:#f59e0b">ER</div>
-            </div>
-          </div>
-          <span class="pct-badge pb-orange">90%</span>
-          <span class="update-time">Updated 1h ago</span>
-        </div>
-      </div>
-
-      <!-- Add New -->
-      <div class="add-budget-card">
-        <div class="add-plus">＋</div>
-        <h4>Add New Project Budget</h4>
-        <p>Instantly allocate funds</p>
-      </div>
+    <div class="form-card">
+      <h3>Budget Catalog</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Budget</th>
+            <th>Limit</th>
+            <th>Period</th>
+            <th>Category</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($budgets as $budget): ?>
+            <tr>
+              <td><?= htmlspecialchars($budget['name'] ?? 'Untitled', ENT_QUOTES, 'UTF-8') ?></td>
+              <td><?= htmlspecialchars(formatCurrency($budget['limit']), ENT_QUOTES, 'UTF-8') ?></td>
+              <td><?= htmlspecialchars($budget['period'] ?? 'N/A', ENT_QUOTES, 'UTF-8') ?></td>
+              <td>
+                <?php
+                  $budgetCategory = array_filter($categoryList, fn($item) => $item['idCategory'] == ($budget['categoryId'] ?? null));
+                  $budgetCategory = reset($budgetCategory);
+                ?>
+                <?= htmlspecialchars($budgetCategory['name'] ?? 'Unassigned', ENT_QUOTES, 'UTF-8') ?>
+              </td>
+              <td>
+                <a class="action-btn" href="?editBudget=<?= urlencode($budget['idBudget']) ?>">✏️</a>
+                <form method="post" action="admin_actions.php?resource=budget&action=delete" style="display:inline-block;margin:0;">
+                  <input type="hidden" name="id" value="<?= htmlspecialchars($budget['idBudget'], ENT_QUOTES, 'UTF-8') ?>"/>
+                  <button type="submit" class="action-btn danger" style="border:none;background:transparent;padding:0;">🗑</button>
+                </form>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
     </div>
 
     <!-- RECENT TRANSACTIONS -->
     <div class="tx-section">
       <div class="tx-header">
         <h3>Recent Transaction Activity</h3>
-        <a class="view-all-link">View all history →</a>
       </div>
       <table>
         <thead>
@@ -347,41 +406,35 @@
           </tr>
         </thead>
         <tbody>
+      <?php if (empty($recentTransactions)): ?>
+        <tr><td colspan="5" style="padding:20px 0;text-align:center;color:#6b7280;">No recent budget transactions available.</td></tr>
+      <?php else: ?>
+        <?php foreach ($recentTransactions as $tx):
+          $isExpense = strtoupper($tx['transCategory'] ?? '') === 'EXPENSE';
+          $owner = trim(($tx['userName'] ?? '') . ' ' . ($tx['userLastName'] ?? '')) ?: 'Unknown';
+          $budgetLabel = $tx['budgetName'] ?: 'Unassigned';
+          $statusClass = $isExpense ? 'sp-pending' : 'sp-cleared';
+        ?>
           <tr>
             <td>
               <div style="display:flex;align-items:center;gap:9px;">
-                <div style="width:28px;height:28px;border-radius:8px;background:#f5f3ff;display:flex;align-items:center;justify-content:center;font-size:.85rem;">☁️</div>
-                <div><div class="tx-name">AWS Monthly Billing</div></div>
+                <div style="width:28px;height:28px;border-radius:8px;background:#f5f3ff;display:flex;align-items:center;justify-content:center;font-size:.85rem;"><?= $isExpense ? '☁️' : '💰' ?></div>
+                <div><div class="tx-name"><?= htmlspecialchars($tx['description'] ?? 'Budget transaction', ENT_QUOTES, 'UTF-8') ?></div></div>
               </div>
             </td>
-            <td><span class="td-cat">Infrastructure</span></td>
+            <td><span class="td-cat"><?= htmlspecialchars($budgetLabel, ENT_QUOTES, 'UTF-8') ?></span></td>
             <td>
               <div class="owner-cell">
-                <div class="ow-ava" style="background:#3b82f6">CT</div>
-                C. Thompson
+                <div class="ow-ava" style="background:<?= htmlspecialchars(categoryStyle(mt_rand(0, 5)), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars(initials($tx['userName'] ?? '', $tx['userLastName'] ?? ''), ENT_QUOTES, 'UTF-8') ?></div>
+                <?= htmlspecialchars($owner, ENT_QUOTES, 'UTF-8') ?>
               </div>
             </td>
-            <td><span class="amt-neg">–$6,450.00</span></td>
-            <td><span class="status-pill sp-cleared">● Cleared</span></td>
+            <td><span class="amt-<?= $isExpense ? 'neg' : 'pos' ?>"><?= $isExpense ? '–' : '+' ?><?= htmlspecialchars(formatCurrency(abs((float) $tx['amout'])), ENT_QUOTES, 'UTF-8') ?></span></td>
+            <td><span class="status-pill <?= $statusClass ?>">● <?= $isExpense ? 'Pending' : 'Cleared' ?></span></td>
           </tr>
-          <tr>
-            <td>
-              <div style="display:flex;align-items:center;gap:9px;">
-                <div style="width:28px;height:28px;border-radius:8px;background:#fffbeb;display:flex;align-items:center;justify-content:center;font-size:.85rem;">✈️</div>
-                <div><div class="tx-name">Tokyo Flight Bookings</div></div>
-              </div>
-            </td>
-            <td><span class="td-cat">Team Offsite</span></td>
-            <td>
-              <div class="owner-cell">
-                <div class="ow-ava" style="background:#059669">AM</div>
-                A. Meru
-              </div>
-            </td>
-            <td><span class="amt-neg">–$4,100.00</span></td>
-            <td><span class="status-pill sp-pending">● Pending</span></td>
-          </tr>
-        </tbody>
+        <?php endforeach; ?>
+      <?php endif; ?>
+    </tbody>
       </table>
     </div>
   </div>

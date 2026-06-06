@@ -69,8 +69,8 @@ class User {
             return $stmt->execute([$name,$lastName, $email,$hash, $id]);
           } else {
             // else do not update the password
-            $stmt = $this->pdo->prepare("UPDATE users SET name=?,lastName=? email=?,role=? WHERE id=?");
-            return $stmt->execute([$name,$lastName, $email, $id]);
+                        $stmt = $this->pdo->prepare("UPDATE users SET name=?, lastName=?, email=? WHERE id=?");
+                        return $stmt->execute([$name,$lastName, $email, $id]);
           }
         }
 
@@ -78,6 +78,11 @@ class User {
     public function deleteUser($id){
         $stmt=$this->pdo->prepare("DELETE FROM users WHERE id=?");
         return $stmt->execute([$id]);
+    }
+
+    // Soft delete user by setting status to deleted
+    public function softDeleteUser($id){
+        return $this->updateStatus($id, 'deleted');
     }
 }
 

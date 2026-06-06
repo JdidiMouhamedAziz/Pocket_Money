@@ -1,3 +1,25 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+  session_start();
+}
+
+require_once __DIR__ . '/shared.php';
+
+$currentUserId = $currentUser['id'] ?? ($_SESSION['user']['id'] ?? null);
+$alertModel = new Alert($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['crud_action']) && $_POST['crud_action'] === 'markAllRead') {
+  $alertModel->readAllAlert($currentUserId);
+  header('Location: ' . userPageUrl('alert'));
+  exit;
+}
+
+$alertData = userAlertPageData($currentUserId);
+$alerts = $alertData['alerts'] ?? [];
+$unreadCount = (int) ($alertData['unreadCount'] ?? 0);
+$displayName = $userName ?: trim(($currentUser['name'] ?? 'User') . ' ' . ($currentUser['lastName'] ?? ''));
+$displayInitials = $userInitials ?: 'U';
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -22,7 +44,11 @@
     .nav-item.active{background:var(--purple);color:#fff;font-weight:700;border-radius:10px;margin:0 10px;padding:11px 12px;}
     .nav-icon{font-size:1rem;width:20px;text-align:center;}
     .sidebar-spacer{flex:1;}
-    .sidebar-user{display:flex;align-items:center;gap:10px;padding:14px 22px;border-top:1px solid rgba(255,255,255,.08);}
+    .sidebar-user{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 22px;border-top:1px solid rgba(255,255,255,.08);}
+    .sidebar-user-info{display:flex;flex-direction:column;gap:4px;min-width:0;}
+    .user-name a{color:#fff;text-decoration:none;}
+    .btn-logout{background:var(--yellow);color:#7a5c00;border:none;border-radius:9px;padding:9px 12px;font-family:'Sora',sans-serif;font-weight:700;font-size:.78rem;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;}
+    .btn-logout:hover{opacity:.9;}
     .user-ava{width:36px;height:36px;border-radius:50%;background:var(--purple);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;flex-shrink:0;}
     .user-name{font-size:.85rem;font-weight:600;color:#fff;}
     .user-plan{font-size:.72rem;color:var(--sidebar-label);}
@@ -65,54 +91,69 @@
 <aside class="sidebar">
   <div class="sidebar-logo"><div class="logo-icon"><span>$</span></div><h2>Finzo</h2></div>
   <div class="sidebar-section-label">Main</div>
-  <a class="nav-item" href="#"><span class="nav-icon">🏠</span> Dashboard</a>
-  <a class="nav-item" href="#"><span class="nav-icon">💳</span> Transactions</a>
-  <a class="nav-item" href="#"><span class="nav-icon">🎯</span> Budgets</a>
-  <a class="nav-item" href="#"><span class="nav-icon">🗂️</span> Categories</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('dashboard'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🏠</span> Dashboard</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('transaction'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">💳</span> Transactions</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('budget'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🎯</span> Budgets</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('category'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🗂️</span> Categories</a>
   <div class="sidebar-section-label" style="margin-top:18px;">Collaboration</div>
-  <a class="nav-item" href="#"><span class="nav-icon">👥</span> My Groups</a>
-  <a class="nav-item active" href="#"><span class="nav-icon">🔔</span> Alerts</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('group'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">👥</span> My Groups</a>
+  <a class="nav-item active" href="<?= htmlspecialchars(userPageUrl('alert'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🔔</span> Alerts</a>
   <div class="sidebar-spacer"></div>
-  <div class="sidebar-user"><div class="user-ava">KM</div><div><div class="user-name">Karim M.</div><div class="user-plan">Free plan</div></div></div>
+  <div class="sidebar-user">
+    <div class="user-ava"><?= htmlspecialchars($displayInitials, ENT_QUOTES, 'UTF-8') ?></div>
+    <div class="sidebar-user-info">
+      <div class="user-name"><a href="<?= htmlspecialchars(userPageUrl('profile'), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') ?></a></div>
+      <div class="user-plan"><?= htmlspecialchars(($currentUser['role'] ?? 'user') . ' plan', ENT_QUOTES, 'UTF-8') ?></div>
+    </div>
+    <a class="btn-logout" href="<?= htmlspecialchars(userPageUrl('logout'), ENT_QUOTES, 'UTF-8') ?>">Logout</a>
+  </div>
 </aside>
 
 <main class="main">
   <div class="topbar">
     <div>
       <h1>Alerts</h1>
-      <p>4 unread notifications</p>
+      <p><?= $unreadCount ?> unread notifications</p>
     </div>
-    <button class="btn-mark-read">✓ Make all as read</button>
+    <form method="post" action="<?= htmlspecialchars(userPageUrl('alert'), ENT_QUOTES, 'UTF-8') ?>">
+      <input type="hidden" name="crud_action" value="markAllRead"/>
+      <button class="btn-mark-read" type="submit">✓ Make all as read</button>
+    </form>
   </div>
 
   <div class="filter-tabs">
-    <button class="ftab active" onclick="filterAlerts('all',this)">All <span class="badge">3</span></button>
-    <button class="ftab" onclick="filterAlerts('unread',this)">Unread <span class="badge">3</span></button>
-    <button class="ftab" onclick="filterAlerts('transactions',this)">Transactions <span class="badge">3</span></button>
-    <button class="ftab" onclick="filterAlerts('system',this)">System <span class="badge">3</span></button>
+    <button class="ftab active" onclick="filterAlerts('all',this)">All <span class="badge"><?= count($alerts) ?></span></button>
+    <button class="ftab" onclick="filterAlerts('unread',this)">Unread <span class="badge"><?= $unreadCount ?></span></button>
+    <button class="ftab" onclick="filterAlerts('transactions',this)">Transactions <span class="badge"><?= count(array_filter($alerts, fn($alert) => ($alert['about'] ?? '') === 'transaction')) ?></span></button>
+    <button class="ftab" onclick="filterAlerts('system',this)">System <span class="badge"><?= count(array_filter($alerts, fn($alert) => ($alert['about'] ?? '') === 'system')) ?></span></button>
   </div>
 
   <div class="alerts-list" id="alertsList">
-    <div class="alert-card type-red" data-type="unread transactions">
-      <div class="unread-dot"></div>
-      <div class="alert-title red">Housing budget almost over!</div>
-      <div class="alert-body">You have used 95% of your Housing budget ($950 of $1,000). Only $50 remaining with 24 days left this month.</div>
-      <div class="alert-meta">2 min ago</div>
-    </div>
-
-    <div class="alert-card type-teal" data-type="unread transactions">
-      <div class="unread-dot"></div>
-      <div class="alert-title teal">salary received</div>
-      <div class="alert-body">A new income of +$6,500 was added to your account. Your balance is now $4,285 after expenses.</div>
-      <div class="alert-meta">3 min ago</div>
-    </div>
-
-    <div class="alert-card type-yellow" data-type="unread system">
-      <div class="unread-dot"></div>
-      <div class="alert-title yellow">Food budget at 80%</div>
-      <div class="alert-body">Your Food budget has reached 80% ($640 of $800). You are spending faster than usual — consider slowing down.</div>
-      <div class="alert-meta">5 min ago</div>
-    </div>
+    <?php if (empty($alerts)): ?>
+      <div class="alert-card type-yellow" data-type="system">
+        <div class="alert-title yellow">No alerts yet</div>
+        <div class="alert-body">When your budgets or transactions trigger notifications, they will appear here.</div>
+        <div class="alert-meta">Now</div>
+      </div>
+    <?php else: ?>
+      <?php foreach ($alerts as $alert): ?>
+        <?php
+          $typeClass = ($alert['about'] ?? '') === 'system' ? 'type-yellow' : 'type-red';
+          $titleClass = ($alert['about'] ?? '') === 'system' ? 'yellow' : 'red';
+          $isUnread = (int) ($alert['isReaded'] ?? 0) === 0;
+          $typeFilter = trim(($isUnread ? 'unread ' : '') . ($alert['about'] ?? 'system'));
+          $body = $alert['message'] ?? '';
+          $title = $alert['name'] ?? 'Alert';
+          $createdAt = !empty($alert['dateSend']) ? date('M d, h:i A', strtotime($alert['dateSend'])) : 'Now';
+        ?>
+        <div class="alert-card <?= $typeClass ?>" data-type="<?= htmlspecialchars($typeFilter, ENT_QUOTES, 'UTF-8') ?>">
+          <?php if ($isUnread): ?><div class="unread-dot"></div><?php endif; ?>
+          <div class="alert-title <?= $titleClass ?>"><?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?></div>
+          <div class="alert-body"><?= htmlspecialchars($body, ENT_QUOTES, 'UTF-8') ?></div>
+          <div class="alert-meta"><?= htmlspecialchars($createdAt, ENT_QUOTES, 'UTF-8') ?></div>
+        </div>
+      <?php endforeach; ?>
+    <?php endif; ?>
   </div>
 </main>
 

@@ -1,3 +1,27 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+require_once __DIR__ . '/admin_helpers.php';
+require_once __DIR__ . '/../../config/database.php';
+
+$adminFlash = getAdminFlash();
+$currentUserId = $_SESSION['user']['id'] ?? null;
+$currentUser = null;
+if ($currentUserId) {
+    $stmt = $pdo->prepare('SELECT * FROM users WHERE id = ? LIMIT 1');
+    $stmt->execute([$currentUserId]);
+    $currentUser = $stmt->fetch(PDO::FETCH_ASSOC);
+}
+$currentUser = $currentUser ?: ($_SESSION['user'] ?? []);
+$fullName = trim(($currentUser['name'] ?? '') . ' ' . ($currentUser['lastName'] ?? '')) ?: 'Admin User';
+$email = $currentUser['email'] ?? '';
+$role = ucfirst($currentUser['role'] ?? 'Admin');
+$status = ucfirst($currentUser['status'] ?? 'active');
+$createdAt = $currentUser['createdAt'] ?? '';
+$updatedAt = $currentUser['updatedAt'] ?? '';
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -24,18 +48,9 @@
     .nav-icon{font-size:.9rem;width:17px;text-align:center;color:#9ca3af;}
     .sidebar-spacer{flex:1;}
     .sidebar-footer{padding:12px 14px;border-top:1px solid var(--border);}
-    .btn-new-report{width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-family:'Sora',sans-serif;font-weight:700;font-size:.8rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;}
+    .btn-logout{width:100%;background:var(--yellow);color:#7a5c00;border:none;border-radius:8px;padding:9px;font-family:'Sora',sans-serif;font-weight:700;font-size:.8rem;cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:5px;}
+    .btn-logout:hover{opacity:.9;}
     .main{margin-left:200px;flex:1;display:flex;flex-direction:column;}
-    .topnav{background:var(--white);border-bottom:1px solid var(--border);padding:11px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
-    .topnav-search{display:flex;align-items:center;gap:7px;background:#f3f4f6;border:1px solid var(--border);border-radius:8px;padding:7px 12px;min-width:220px;}
-    .topnav-search input{background:transparent;border:none;outline:none;font-family:'DM Sans',sans-serif;font-size:.83rem;color:var(--text-mid);width:100%;}
-    .topnav-search input::placeholder{color:var(--text-light);}
-    .topnav-right{display:flex;align-items:center;gap:10px;}
-    .notif-btn{width:32px;height:32px;border-radius:50%;background:#f3f4f6;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;}
-    .notif-dot{position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;background:var(--red);border:2px solid #fff;}
-    .profile-btn{display:flex;align-items:center;gap:7px;cursor:pointer;padding:5px 10px 5px 5px;background:#f3f4f6;border:1px solid var(--border);border-radius:50px;}
-    .profile-ava{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#818cf8);display:flex;align-items:center;justify-content:center;font-size:.62rem;font-weight:700;color:#fff;}
-    .profile-btn span{font-size:.8rem;font-weight:600;color:var(--text-mid);}
     /* CONTENT */
     .content{padding:22px 24px;display:grid;grid-template-columns:200px 1fr;gap:24px;}
     .page-title-area{grid-column:1/-1;margin-bottom:0;}
@@ -54,13 +69,12 @@
     .section-card h3{font-size:1rem;font-weight:700;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border);}
     /* PROFILE PHOTO */
     .photo-row{display:flex;align-items:center;gap:18px;margin-bottom:20px;}
+    .admin-flash{background:#eef6ff;border:1px solid #dbeafe;color:#1e40af;border-radius:12px;padding:14px 18px;margin-bottom:18px;font-weight:600;}
+    .admin-flash.error{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
     .photo-circle{width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#e5e7eb,#d1d5db);display:flex;align-items:center;justify-content:center;font-size:1.4rem;position:relative;border:3px solid var(--border);}
     .photo-edit{position:absolute;bottom:0;right:0;width:22px;height:22px;border-radius:50%;background:var(--accent);border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:.6rem;cursor:pointer;}
     .photo-label{font-size:.88rem;font-weight:700;color:var(--text-dark);margin-bottom:4px;}
     .photo-sub{font-size:.75rem;color:var(--text-muted);margin-bottom:10px;}
-    .photo-btns{display:flex;gap:8px;}
-    .btn-upload{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:7px 14px;font-family:'DM Sans',sans-serif;font-size:.78rem;font-weight:700;cursor:pointer;}
-    .btn-remove{background:var(--white);border:1px solid var(--border);border-radius:7px;padding:7px 14px;font-family:'DM Sans',sans-serif;font-size:.78rem;font-weight:600;color:var(--text-mid);cursor:pointer;}
     /* FORM */
     .form-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
     .form-group{display:flex;flex-direction:column;gap:5px;}
@@ -87,96 +101,83 @@
 <aside class="sidebar">
   <div class="sidebar-header"><div class="logo-row"><div class="logo-mark">B</div><div class="logo-text"><h2>BudgetPro</h2><p>Collaborative Finance</p></div></div></div>
   <nav class="sidebar-nav">
-    <a class="nav-item" href="#"><span class="nav-icon">📊</span> Dashboard</a>
-    <a class="nav-item" href="#"><span class="nav-icon">👥</span> Users</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🎯</span> Budgets</a>
-    <a class="nav-item" href="#"><span class="nav-icon">💳</span> Transactions</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🗂️</span> Categories</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🔔</span> Alerts</a>
-    <a class="nav-item active" href="#"><span class="nav-icon">⚙️</span> Settings</a>
+    <a class="nav-item" href="dashboard.php"><span class="nav-icon">📊</span> Dashboard</a>
+    <a class="nav-item" href="users.php"><span class="nav-icon">👥</span> Users</a>
+    <a class="nav-item" href="budgets.php"><span class="nav-icon">🎯</span> Budgets</a>
+    <a class="nav-item" href="transactions.php"><span class="nav-icon">💳</span> Transactions</a>
+    <a class="nav-item" href="categories.php"><span class="nav-icon">🗂️</span> Categories</a>
+    <a class="nav-item" href="alerts.php"><span class="nav-icon">🔔</span> Alerts</a>
+    <a class="nav-item" href="export_data.php"><span class="nav-icon">⬇️</span> Export Data</a>
+    <a class="nav-item active" href="profile.php"><span class="nav-icon">⚙️</span> Settings</a>
   </nav>
   <div class="sidebar-spacer"></div>
-  <div class="sidebar-footer"><button class="btn-new-report">＋ New Report</button></div>
+  <div class="sidebar-footer"><a class="btn-logout" href="/pocket_money/views/logout.php">Logout</a></div>
 </aside>
 <div class="main">
-  <div class="topnav">
-    <div class="topnav-search"><span style="color:#9ca3af">🔍</span><input type="text" placeholder="Search settings..."/></div>
-    <div class="topnav-right">
-      <div class="notif-btn">🔔<div class="notif-dot"></div></div>
-      <div class="profile-btn"><div class="profile-ava">AR</div><span>Alex Rivera</span><span style="color:var(--text-light);font-size:.7rem">▾</span><span style="font-size:.72rem;color:var(--text-muted);margin-left:2px;">Profile Settings</span></div>
-    </div>
-  </div>
   <div class="content">
     <div class="page-title-area">
       <h1>Account Settings</h1>
-      <p>Manage your personal information, security preferences, and global notifications.</p>
+      <p>Manage your profile information.</p>
     </div>
     <!-- LEFT NAV -->
     <div class="settings-nav">
-      <div class="snav-item active" onclick="showTab('profile',this)"><span class="snav-icon">👤</span> Profile</div>
-      <div class="snav-item" onclick="showTab('security',this)"><span class="snav-icon">🔒</span> Security</div>
-      <div class="snav-item" onclick="showTab('billing',this)"><span class="snav-icon">💳</span> Billing</div>
-      <div class="snav-item" onclick="showTab('integrations',this)"><span class="snav-icon">🔗</span> Integrations</div>
+      <div class="snav-item active"><span class="snav-icon">👤</span> Profile</div>
     </div>
     <!-- RIGHT PANELS -->
     <div class="settings-panel">
+      <?php if ($adminFlash): ?>
+        <div class="admin-flash <?= $adminFlash['success'] ? '' : 'error' ?>"><?= htmlspecialchars($adminFlash['message'], ENT_QUOTES, 'UTF-8') ?></div>
+      <?php endif; ?>
       <!-- PROFILE INFO -->
-      <div class="section-card" id="tab-profile">
-        <h3>Profile Information</h3>
-        <div class="photo-row">
-          <div class="photo-circle">👤<div class="photo-edit">✎</div></div>
-          <div>
-            <div class="photo-label">Profile Photo</div>
-            <div class="photo-sub">Update your avatar. Recommended size is 256×256px.</div>
-            <div class="photo-btns">
-              <button class="btn-upload">Upload New</button>
-              <button class="btn-remove">Remove</button>
+      <form method="post" action="admin_actions.php?resource=user&action=update">
+        <input type="hidden" name="id" value="<?= htmlspecialchars($currentUserId, ENT_QUOTES, 'UTF-8') ?>"/>
+        <div class="section-card" id="tab-profile">
+          <h3>Profile Information</h3>
+          <div class="photo-row">
+            <div class="photo-circle">👤<div class="photo-edit">✎</div></div>
+            <div>
+              <div class="photo-label">Profile Photo</div>
+              <div class="photo-sub">Update your avatar. Recommended size is 256×256px.</div>
+              <div class="photo-note">Update the fields below to keep your account information current.</div>
             </div>
           </div>
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label>First Name</label>
+              <input class="form-input" name="name" type="text" value="<?= htmlspecialchars($currentUser['name'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required/>
+            </div>
+            <div class="form-group">
+              <label>Last Name</label>
+              <input class="form-input" name="lastName" type="text" value="<?= htmlspecialchars($currentUser['lastName'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required/>
+            </div>
+            <div class="form-group">
+              <label>Email Address</label>
+              <input class="form-input" name="email" type="email" value="<?= htmlspecialchars($email, ENT_QUOTES, 'UTF-8') ?>" required/>
+            </div>
+            <div class="form-group full">
+              <label>Role</label>
+              <input class="form-input" type="text" value="<?= htmlspecialchars($role, ENT_QUOTES, 'UTF-8') ?>" readonly/>
+            </div>
+            <div class="form-group full">
+              <label>New Password</label>
+              <input class="form-input" name="password" type="password" placeholder="Leave blank to keep current password"/>
+            </div>
+          </div>
+          <div class="clearfix"><button class="btn-save" type="submit">Save Changes</button></div>
         </div>
-        <div class="form-grid-2">
-          <div class="form-group">
-            <label>Full Name</label>
-            <input class="form-input" type="text" value="Alex Rivera"/>
-          </div>
-          <div class="form-group">
-            <label>Email Address</label>
-            <input class="form-input" type="email" value="alex.rivera@budgetpro.io"/>
-          </div>
-          <div class="form-group full">
-            <label>Job Title</label>
-            <input class="form-input" type="text" value="Senior Financial Controller"/>
-          </div>
-        </div>
-        <div class="clearfix"><button class="btn-save">Save Changes</button></div>
-      </div>
-      <!-- SECURITY -->
-      <div class="section-card" id="tab-security">
-        <h3>Security</h3>
-        <div class="form-grid-2">
-          <div class="form-group">
-            <label>Current Password</label>
-            <input class="form-input" type="password" value="password123"/>
-          </div>
-          <div class="form-group">
-            <label>New Password</label>
-            <input class="form-input" type="password" placeholder="••••••••••••"/>
-          </div>
-          <div class="form-group">
-            <label>Confirm New Password</label>
-            <input class="form-input" type="password" placeholder="••••••••••••"/>
-          </div>
-        </div>
-        <div class="pw-hint"><span>ℹ️</span><p>Password must be at least 12 characters long and include a mix of uppercase, lowercase, numbers, and symbols.</p></div>
-        <div class="clearfix"><button class="btn-update-pw btn-save">Update Password</button></div>
-      </div>
+      </form>
       <!-- DANGER ZONE -->
       <div class="danger-card">
         <div>
-          <h3>Delete Account</h3>
-          <p>Once you delete your account, there is no going back. Please be certain.</p>
+          <h3>Account Status</h3>
+          <p>Role: <?= htmlspecialchars($role, ENT_QUOTES, 'UTF-8') ?> · Status: <?= htmlspecialchars($status, ENT_QUOTES, 'UTF-8') ?></p>
+          <p>Member since <?= htmlspecialchars(formatDate($createdAt), ENT_QUOTES, 'UTF-8') ?>, updated <?= htmlspecialchars(formatDate($updatedAt), ENT_QUOTES, 'UTF-8') ?>.</p>
         </div>
-        <button class="btn-delete-forever">Delete Forever</button>
+        <form method="post" action="admin_actions.php?resource=user&action=status" style="margin:0;">
+          <input type="hidden" name="id" value="<?= htmlspecialchars($currentUserId, ENT_QUOTES, 'UTF-8') ?>"/>
+          <input type="hidden" name="status" value="deleted"/>
+          <button class="btn-delete-forever" type="submit">Deactivate Account</button>
+        </form>
       </div>
     </div>
   </div>

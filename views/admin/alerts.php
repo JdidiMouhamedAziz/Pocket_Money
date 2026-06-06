@@ -1,3 +1,35 @@
+<?php
+require_once __DIR__ . '/admin_helpers.php';
+
+$adminFlash = getAdminFlash();
+
+$filterStatus = strtolower(trim($_GET['filterStatus'] ?? 'all'));
+$filterAbout = strtolower(trim($_GET['filterAbout'] ?? 'all'));
+$whereClauses = [];
+$queryParams = [];
+if ($filterStatus === 'unread') {
+    $whereClauses[] = 'a.isReaded = 0';
+} elseif ($filterStatus === 'read') {
+    $whereClauses[] = 'a.isReaded = 1';
+}
+if (in_array($filterAbout, ['transaction', 'system'], true)) {
+    $whereClauses[] = 'LOWER(a.about) = ?';
+    $queryParams[] = $filterAbout;
+}
+$sql = "SELECT a.*, u.name AS userName, u.lastName AS userLastName FROM alert a LEFT JOIN users u ON u.id=a.userId";
+if ($whereClauses) {
+    $sql .= ' WHERE ' . implode(' AND ', $whereClauses);
+}
+$sql .= ' ORDER BY a.dateSend DESC LIMIT 10';
+$alertsStmt = $pdo->prepare($sql);
+$alertsStmt->execute($queryParams);
+$alerts = $alertsStmt->fetchAll(PDO::FETCH_ASSOC);
+$totalAlerts = (int) $pdo->query("SELECT COUNT(*) FROM alert")->fetchColumn();
+$unreadAlerts = (int) $pdo->query("SELECT COUNT(*) FROM alert WHERE isReaded = 0")->fetchColumn();
+$readAlerts = (int) $pdo->query("SELECT COUNT(*) FROM alert WHERE isReaded = 1")->fetchColumn();
+$transactionAlerts = (int) $pdo->query("SELECT COUNT(*) FROM alert WHERE about = 'transaction'")->fetchColumn();
+$systemAlerts = (int) $pdo->query("SELECT COUNT(*) FROM alert WHERE about = 'system'")->fetchColumn();
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -24,17 +56,13 @@
     .nav-icon{font-size:.9rem;width:17px;text-align:center;color:#9ca3af;}
     .sidebar-spacer{flex:1;}
     .sidebar-footer{padding:12px 14px;border-top:1px solid var(--border);}
-    .btn-new-report{width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-family:'Sora',sans-serif;font-weight:700;font-size:.8rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;}
+    .btn-logout{width:100%;background:var(--yellow);color:#7a5c00;border:none;border-radius:8px;padding:9px;font-family:'Sora',sans-serif;font-weight:700;font-size:.8rem;cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:5px;}
+    .btn-logout:hover{opacity:.9;}
+    .admin-flash{background:#eef6ff;border:1px solid #dbeafe;color:#1e40af;border-radius:12px;padding:14px 18px;margin-bottom:18px;font-weight:600;}
+    .admin-flash.error{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
     .main{margin-left:200px;flex:1;display:flex;flex-direction:column;}
-    .topnav{background:var(--white);border-bottom:1px solid var(--border);padding:11px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
-    .topnav-right{display:flex;align-items:center;gap:10px;}
-    .notif-btn{width:32px;height:32px;border-radius:50%;background:#f3f4f6;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;}
-    .notif-dot{position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;background:var(--red);border:2px solid #fff;}
-    .profile-btn{display:flex;align-items:center;gap:7px;cursor:pointer;padding:5px 10px 5px 5px;background:#f3f4f6;border:1px solid var(--border);border-radius:50px;}
-    .profile-ava{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#818cf8);display:flex;align-items:center;justify-content:center;font-size:.62rem;font-weight:700;color:#fff;}
-    .profile-btn span{font-size:.8rem;font-weight:600;color:var(--text-mid);}
     /* LAYOUT */
-    .content{padding:22px 24px;display:grid;grid-template-columns:1fr 280px;gap:20px;}
+    .content{padding:22px 24px;display:grid;grid-template-columns:1fr;gap:20px;}
     .left-col{display:flex;flex-direction:column;gap:0;}
     /* FILTER BAR */
     .filter-bar{background:var(--white);border-radius:var(--radius) var(--radius) 0 0;padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
@@ -45,8 +73,9 @@
     .ftab.active{background:var(--accent);border-color:var(--accent);color:#fff;}
     .ftab-count{font-size:.7rem;font-weight:700;padding:1px 7px;border-radius:50px;background:rgba(255,255,255,.25);color:#fff;}
     .ftab:not(.active) .ftab-count{background:#e5e7eb;color:var(--text-mid);}
+    .filter-select{width:100%;background:#f9fafb;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-family:'DM Sans',sans-serif;font-size:.86rem;color:var(--text-dark);outline:none;transition:border-color .2s;}
+    .filter-select:focus{border-color:var(--accent);background:#fff;}
     /* ALERT LIST */
-    .alerts-list{background:var(--white);border-radius:0 0 var(--radius) var(--radius);box-shadow:var(--shadow);}
     .alert-item{padding:16px 18px;border-bottom:1px solid #f3f4f6;display:flex;gap:12px;transition:background .12s;}
     .alert-item:hover{background:#fafbff;}
     .alert-item:last-child{border-bottom:none;}
@@ -72,34 +101,6 @@
     .alert-meta-item{display:flex;align-items:center;gap:3px;}
     .end-msg{text-align:center;padding:18px;font-size:.78rem;color:var(--text-muted);}
     .end-msg a{color:var(--accent);font-weight:600;text-decoration:none;cursor:pointer;}
-    /* RIGHT COLUMN */
-    .right-col{display:flex;flex-direction:column;gap:16px;}
-    /* DAILY SUMMARY */
-    .summary-card{background:var(--accent);border-radius:var(--radius);padding:18px;color:#fff;}
-    .summary-card h4{font-size:.88rem;font-weight:700;margin-bottom:6px;}
-    .summary-card p{font-size:.78rem;color:rgba(255,255,255,.8);line-height:1.5;margin-bottom:14px;}
-    .btn-gen-report{width:100%;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:8px;padding:9px;font-family:'Sora',sans-serif;font-weight:700;font-size:.8rem;color:#fff;cursor:pointer;transition:background .15s;}
-    .btn-gen-report:hover{background:rgba(255,255,255,.25);}
-    /* ANALYTICS */
-    .analytics-card{background:var(--white);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);}
-    .analytics-card h4{font-size:.88rem;font-weight:700;margin-bottom:14px;}
-    .analytics-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
-    .analytics-label{font-size:.78rem;color:var(--text-mid);}
-    .analytics-right{display:flex;align-items:center;gap:8px;}
-    .analytics-pct{font-size:.78rem;font-weight:700;}
-    .analytics-bar-bg{width:80px;height:6px;background:#f3f4f6;border-radius:50px;}
-    .analytics-bar-fill{height:6px;border-radius:50px;}
-    .pct-red{color:var(--red);}
-    .pct-orange{color:var(--orange);}
-    .pct-blue{color:var(--accent);}
-    /* AI CARD */
-    .ai-card{background:linear-gradient(135deg,#1e1b4b,#3730a3);border-radius:var(--radius);padding:18px;color:#fff;}
-    .ai-card-top{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
-    .ai-icon{width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;font-size:.9rem;}
-    .ai-card h4{font-size:.9rem;font-weight:800;}
-    .ai-card p{font-size:.75rem;color:rgba(255,255,255,.75);line-height:1.5;margin-bottom:14px;}
-    .btn-view-strat{width:100%;background:rgba(255,255,255,.15);border:1.5px solid rgba(255,255,255,.3);border-radius:8px;padding:8px;font-family:'Sora',sans-serif;font-weight:700;font-size:.78rem;color:#fff;cursor:pointer;}
-    .btn-view-strat:hover{background:rgba(255,255,255,.25);}
   </style>
 </head>
 <body>
@@ -108,146 +109,105 @@
     <div class="logo-row"><div class="logo-mark">B</div><div class="logo-text"><h2>BudgetPro</h2><p>Collaborative Finance</p></div></div>
   </div>
   <nav class="sidebar-nav">
-    <a class="nav-item" href="#"><span class="nav-icon">📊</span> Dashboard</a>
-    <a class="nav-item" href="#"><span class="nav-icon">👥</span> Users</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🎯</span> Budgets</a>
-    <a class="nav-item" href="#"><span class="nav-icon">💳</span> Transactions</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🗂️</span> Categories</a>
-    <a class="nav-item active" href="#"><span class="nav-icon">🔔</span> Alerts</a>
-    <a class="nav-item" href="#"><span class="nav-icon">⚙️</span> Settings</a>
+    <a class="nav-item" href="dashboard.php"><span class="nav-icon">📊</span> Dashboard</a>
+    <a class="nav-item" href="users.php"><span class="nav-icon">👥</span> Users</a>
+    <a class="nav-item" href="budgets.php"><span class="nav-icon">🎯</span> Budgets</a>
+    <a class="nav-item" href="transactions.php"><span class="nav-icon">💳</span> Transactions</a>
+    <a class="nav-item" href="categories.php"><span class="nav-icon">🗂️</span> Categories</a>
+    <a class="nav-item active" href="alerts.php"><span class="nav-icon">🔔</span> Alerts</a>
+    <a class="nav-item" href="export_data.php"><span class="nav-icon">⬇️</span> Export Data</a>
+    <a class="nav-item" href="profile.php"><span class="nav-icon">⚙️</span> Settings</a>
   </nav>
   <div class="sidebar-spacer"></div>
-  <div class="sidebar-footer"><button class="btn-new-report">＋ New Report</button></div>
+  <div class="sidebar-footer"><a class="btn-logout" href="/pocket_money/views/logout.php">Logout</a></div>
 </aside>
 <div class="main">
-  <div class="topnav">
-    <h2 style="font-size:1.1rem;font-weight:800;">Alerts &amp; Notifications</h2>
-    <div class="topnav-right">
-      <div class="notif-btn">🔔<div class="notif-dot"></div></div>
-      <div class="profile-btn"><div class="profile-ava">AR</div><span>Alex Rivera</span><span style="color:var(--text-light);font-size:.7rem">▾</span></div>
-    </div>
-  </div>
   <div class="content">
     <!-- LEFT -->
     <div class="left-col">
       <div class="filter-bar">
-        <div style="display:flex;flex-direction:column;gap:6px;width:100%;">
-          <div class="filter-label">Filter Alerts</div>
-          <div class="ftab-row">
-            <div class="ftab active" onclick="filterAlerts('all',this)">All Alerts <span class="ftab-count">8</span></div>
-            <div class="ftab" onclick="filterAlerts('unread',this)">Unread <span class="ftab-count">4</span></div>
-            <div class="ftab" onclick="filterAlerts('archived',this)">Archived <span class="ftab-count">2</span></div>
+        <form method="get" action="alerts.php" style="display:flex;gap:10px;align-items:flex-end;width:100%;flex-wrap:wrap;">
+          <div style="flex:1;min-width:180px;">
+            <div class="filter-label">Status</div>
+            <select class="filter-select" name="filterStatus">
+              <option value="all" <?= $filterStatus === 'all' ? 'selected' : '' ?>>All alerts</option>
+              <option value="unread" <?= $filterStatus === 'unread' ? 'selected' : '' ?>>Unread</option>
+              <option value="read" <?= $filterStatus === 'read' ? 'selected' : '' ?>>Read</option>
+            </select>
           </div>
-        </div>
+          <div style="flex:1;min-width:180px;">
+            <div class="filter-label">Type</div>
+            <select class="filter-select" name="filterAbout">
+              <option value="all" <?= $filterAbout === 'all' ? 'selected' : '' ?>>All types</option>
+              <option value="transaction" <?= $filterAbout === 'transaction' ? 'selected' : '' ?>>Transaction</option>
+              <option value="system" <?= $filterAbout === 'system' ? 'selected' : '' ?>>System</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button type="submit" class="btn-take-action">Apply filters</button>
+            <a class="btn-take-action" href="alerts.php" style="background:#f3f4f6;color:var(--text-dark);">Reset</a>
+          </div>
+        </form>
+      </div>
+      <?php if ($adminFlash): ?>
+        <div class="admin-flash <?= $adminFlash['success'] ? '' : 'error' ?>"><?= htmlspecialchars($adminFlash['message'], ENT_QUOTES, 'UTF-8') ?></div>
+      <?php endif; ?>
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-bottom:12px;">
+        <form method="post" action="admin_actions.php?resource=alert&action=markAllRead" style="margin:0;">
+          <button type="submit" class="btn-take-action">Mark All Read</button>
+        </form>
       </div>
       <div class="alerts-list">
         <!-- Budget Exceeded -->
-        <div class="alert-item" data-type="all unread">
-          <div class="alert-left-bar bar-red"></div>
-          <div class="alert-body">
-            <div class="alert-top-row">
-              <div class="alert-title-row">
-                <span class="alert-title red">Budget Exceeded</span>
-                <span class="crit-badge cb-critical">CRITICAL</span>
-              </div>
-              <button class="btn-take-action">Take Action</button>
-            </div>
-            <div class="alert-text">The Q3 Cloud Infrastructure budget has exceeded its limit by 12% ($81,348).</div>
-            <div class="alert-meta">
-              <span class="alert-meta-item">🕐 2 hours ago</span>
-              <span class="alert-meta-item">👤 IT Dept</span>
-            </div>
-          </div>
-        </div>
-        <!-- Warning Near Limit -->
-        <div class="alert-item" data-type="all unread">
-          <div class="alert-left-bar bar-orange"></div>
-          <div class="alert-body">
-            <div class="alert-top-row">
-              <div class="alert-title-row">
-                <span class="alert-title orange">Warning: Near Limit</span>
-                <span class="crit-badge cb-warning">CRITICAL</span>
-              </div>
-              <button class="btn-take-action">Take Action</button>
-            </div>
-            <div class="alert-text">The Employee Wellness Program is at 85% of its monthly allocation ($4,250 of $5,000).</div>
-            <div class="alert-meta">
-              <span class="alert-meta-item">🕐 3 hours ago</span>
-              <span class="alert-meta-item">👤 HR Benefits</span>
-            </div>
-          </div>
-        </div>
-        <!-- Monthly Reconciliation -->
+        <?php if (empty($alerts)): ?>
         <div class="alert-item" data-type="all">
           <div class="alert-left-bar bar-blue"></div>
           <div class="alert-body">
-            <div class="alert-top-row">
-              <div class="alert-title-row">
-                <span class="alert-title blue">Monthly Reconciliation Due</span>
-                <span class="crit-badge cb-new">NEW</span>
+            <div class="alert-top-row"><div class="alert-title-row"><span class="alert-title blue">No alerts</span></div></div>
+            <div class="alert-text">You currently have no notifications. Check back later for system updates and spend alerts.</div>
+          </div>
+        </div>
+      <?php else: ?>
+        <?php foreach ($alerts as $alert):
+          $isUnread = !$alert['isReaded'];
+          $isTransaction = strtolower($alert['about'] ?? '') === 'transaction';
+          $barClass = $isTransaction ? 'bar-red' : 'bar-blue';
+          $titleClass = $isTransaction ? 'red' : 'blue';
+          $badgeClass = $isUnread ? 'cb-critical' : 'cb-new';
+          $badgeLabel = $isTransaction ? 'CRITICAL' : ($isUnread ? 'NEW' : 'INFO');
+          $userName = trim(($alert['userName'] ?? '') . ' ' . ($alert['userLastName'] ?? '')) ?: 'System';
+          $metaType = $isTransaction ? 'Transaction' : 'System';
+        ?>
+          <div class="alert-item" data-type="all <?= $isUnread ? 'unread' : 'read' ?>">
+            <div class="alert-left-bar <?= $barClass ?>"></div>
+            <div class="alert-body">
+              <div class="alert-top-row">
+                <div class="alert-title-row">
+                  <span class="alert-title <?= $titleClass ?>"><?= htmlspecialchars($alert['name'] ?? 'Alert', ENT_QUOTES, 'UTF-8') ?></span>
+                  <span class="crit-badge <?= $badgeClass ?>"><?= htmlspecialchars($badgeLabel, ENT_QUOTES, 'UTF-8') ?></span>
+                </div>
+                <form method="post" action="admin_actions.php?resource=alert&action=read" style="margin:0;display:inline-block;">
+                  <input type="hidden" name="id" value="<?= htmlspecialchars($alert['idAlert'], ENT_QUOTES, 'UTF-8') ?>"/>
+                  <button type="submit" class="btn-take-action"><?= $isUnread ? 'Mark Read' : 'View' ?></button>
+                </form>
+                <form method="post" action="admin_actions.php?resource=alert&action=delete" style="margin:0;display:inline-block;">
+                  <input type="hidden" name="id" value="<?= htmlspecialchars($alert['idAlert'], ENT_QUOTES, 'UTF-8') ?>"/>
+                  <button type="submit" class="btn-take-action" style="background:#fef2f2;color:#b91c1c;">Delete</button>
+                </form>
               </div>
-              <button class="btn-take-action" style="background:#f3f4f6;color:var(--text-mid);box-shadow:none;border:1px solid var(--border);">⋯</button>
+              <div class="alert-text"><?= htmlspecialchars($alert['message'] ?? '', ENT_QUOTES, 'UTF-8') ?></div>
+              <div class="alert-meta">
+                <span class="alert-meta-item">🕐 <?= htmlspecialchars(relativeTime($alert['dateSend']), ENT_QUOTES, 'UTF-8') ?></span>
+                <span class="alert-meta-item">👤 <?= htmlspecialchars($userName, ENT_QUOTES, 'UTF-8') ?></span>
+              </div>
             </div>
-            <div class="alert-text">It's time to review and reconcile the Marketing Operations expenses for last month.</div>
-            <div class="alert-meta">
-              <span class="alert-meta-item">🕐 Yesterday</span>
-              <span class="alert-meta-item">🗂️ Marketing</span>
-            </div>
           </div>
-        </div>
-        <div class="end-msg">You've reached the end of your notifications for today. <a>View Notification History</a></div>
-      </div>
-    </div>
-    <!-- RIGHT -->
-    <div class="right-col">
-      <!-- Daily Summary -->
-      <div class="summary-card">
-        <h4>Daily Summary</h4>
-        <p>You have 2 critical alerts that require immediate attention today.</p>
-        <button class="btn-gen-report">Generate Report</button>
-      </div>
-      <!-- Analytics -->
-      <div class="analytics-card">
-        <h4>Alert Analytics</h4>
-        <div class="analytics-row">
-          <span class="analytics-label">Critical</span>
-          <div class="analytics-right">
-            <span class="analytics-pct pct-red">34%</span>
-            <div class="analytics-bar-bg"><div class="analytics-bar-fill" style="width:34%;background:var(--red)"></div></div>
-          </div>
-        </div>
-        <div class="analytics-row">
-          <span class="analytics-label">Warning</span>
-          <div class="analytics-right">
-            <span class="analytics-pct pct-orange">56%</span>
-            <div class="analytics-bar-bg"><div class="analytics-bar-fill" style="width:56%;background:var(--orange)"></div></div>
-          </div>
-        </div>
-        <div class="analytics-row">
-          <span class="analytics-label">Info</span>
-          <div class="analytics-right">
-            <span class="analytics-pct pct-blue">38%</span>
-            <div class="analytics-bar-bg"><div class="analytics-bar-fill" style="width:38%;background:var(--accent)"></div></div>
-          </div>
-        </div>
-      </div>
-      <!-- AI -->
-      <div class="ai-card">
-        <div class="ai-card-top"><div class="ai-icon">🤖</div><h4>AI Budget Optimizer</h4></div>
-        <p>Based on your alerts, we can suggest 3 reallocation strategies to prevent future budget overflows.</p>
-        <button class="btn-view-strat">View Strategies</button>
+        <?php endforeach; ?>
+      <?php endif; ?>
+        <div class="end-msg">You've reached the end of your notifications for today. <a href="export_data.php?type=alerts">Export alert history</a></div>
       </div>
     </div>
   </div>
 </div>
-<script>
-  function filterAlerts(type,btn){
-    document.querySelectorAll('.ftab').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-    document.querySelectorAll('.alert-item').forEach(item=>{
-      item.style.display = (type==='all'||item.dataset.type.includes(type)) ? '' : 'none';
-    });
-  }
-</script>
 </body>
 </html>

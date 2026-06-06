@@ -1,3 +1,51 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+  session_start();
+}
+
+require_once __DIR__ . '/shared.php';
+define('CONTROLLER_INCLUDED', true);
+require_once __DIR__ . '/../../controllers/budgetController.php';
+
+$currentUserId = $currentUser['id'] ?? ($_SESSION['user']['id'] ?? null);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['crud_action'])) {
+  budgetController($_POST['crud_action'], $_POST);
+  header('Location: ' . userPageUrl('budget'));
+  exit;
+}
+
+$budgetData = userBudgetPageData($currentUserId);
+$budgetSummary = $budgetData['summary'] ?? ['budget' => 0, 'spent' => 0, 'remaining' => 0, 'active' => 0];
+$budgetRows = $budgetData['rows'] ?? [];
+$budgetAlerts = $budgetData['alerts'] ?? [];
+$budgetRecords = userBudgetRecords($currentUserId);
+$categories = userCategoryList();
+$displayName = $userName ?: trim(($currentUser['name'] ?? 'User') . ' ' . ($currentUser['lastName'] ?? ''));
+$displayInitials = $userInitials ?: 'U';
+$editingBudget = null;
+
+if (!empty($_GET['edit'])) {
+  $editId = (int) $_GET['edit'];
+  foreach ($budgetRecords as $record) {
+    if ((int) ($record['idBudget'] ?? 0) === $editId) {
+      $editingBudget = $record;
+      break;
+    }
+  }
+}
+
+$budgetModalAction = $editingBudget ? 'update' : 'create';
+$budgetModalTitle = $editingBudget ? 'Edit Budget' : 'Create New Budget';
+$budgetModalButton = $editingBudget ? '➕ Update Budget' : '➕ Create Budget';
+$budgetModalLimit = $editingBudget['limit'] ?? '';
+$budgetModalPeriod = $editingBudget['period'] ?? 'Monthly';
+$budgetModalStartDate = !empty($editingBudget['startDate']) ? $editingBudget['startDate'] : date('Y-m-d');
+$budgetModalName = $editingBudget['name'] ?? '';
+$budgetModalNote = $editingBudget['note'] ?? '';
+$budgetModalSendAlertAt = $editingBudget['sendAlertAt'] ?? '';
+$budgetModalCategoryId = $editingBudget['categoryId'] ?? ($categories[0]['idCategory'] ?? '');
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -42,7 +90,11 @@
     .nav-item.active { background:var(--purple); color:#fff; font-weight:700; border-radius:10px; margin:0 10px; padding:11px 12px; }
     .nav-icon { font-size:1rem; width:20px; text-align:center; }
     .sidebar-spacer { flex:1; }
-    .sidebar-user { display:flex; align-items:center; gap:10px; padding:14px 22px; border-top:1px solid rgba(255,255,255,.08); }
+    .sidebar-user { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 22px; border-top:1px solid rgba(255,255,255,.08); }
+    .sidebar-user-info { display:flex; flex-direction:column; gap:4px; min-width:0; }
+    .user-name a { color:#fff; text-decoration:none; }
+    .btn-logout { background:var(--yellow); color:#7a5c00; border:none; border-radius:9px; padding:9px 12px; font-family:'Sora',sans-serif; font-weight:700; font-size:.78rem; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; }
+    .btn-logout:hover { opacity:.9; }
     .user-ava { width:36px; height:36px; border-radius:50%; background:var(--purple); color:#fff; display:flex; align-items:center; justify-content:center; font-size:.78rem; font-weight:700; flex-shrink:0; }
     .user-name { font-size:.85rem; font-weight:600; color:#fff; }
     .user-plan { font-size:.72rem; color:#6b6e80; }
@@ -81,9 +133,13 @@
 
     /* BUDGET CARD */
     .budget-card { background:var(--white); border-radius:var(--card-radius); padding:22px; box-shadow:var(--shadow); }
-    .budget-card-header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+    .budget-card-header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
+    .budget-card-title { display:flex; align-items:center; gap:10px; }
     .b-dot { width:13px; height:13px; border-radius:50%; flex-shrink:0; }
     .budget-card-header h4 { font-size:1.05rem; font-weight:700; }
+    .budget-card-actions { display:flex; gap:6px; }
+    .budget-action { width:28px; height:28px; border-radius:8px; border:1px solid var(--border); background:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:.78rem; color:var(--text-mid); }
+    .budget-action:hover { border-color:var(--purple); color:var(--purple); }
     .b-spent { font-size:.82rem; color:var(--text-muted); margin-bottom:12px; }
     .b-spent strong { color:var(--text-dark); }
     .prog-bg { background:#ececf5; border-radius:50px; height:7px; margin-bottom:12px; }
@@ -139,12 +195,6 @@
     .date-wrap input { padding-right:36px; }
     .date-icon { position:absolute; right:12px; top:50%; transform:translateY(-50%); color:var(--text-muted); pointer-events:none; }
 
-    /* Category chips */
-    .cat-chips { display:flex; flex-wrap:wrap; gap:8px; }
-    .cat-chip { padding:7px 16px; border-radius:50px; font-size:.82rem; font-weight:600; border:1.5px solid var(--border); background:var(--input-bg); color:var(--text-mid); cursor:pointer; transition:all .15s; font-family:'DM Sans',sans-serif; }
-    .cat-chip.active { background:var(--purple); border-color:var(--purple); color:#fff; }
-    .cat-chip:hover:not(.active) { border-color:var(--purple); color:var(--purple); }
-
     /* Modal footer */
     .modal-footer { display:flex; justify-content:flex-end; gap:10px; margin-top:20px; }
     .btn-cancel { background:none; border:1.5px solid var(--border); border-radius:9px; padding:10px 20px; font-family:'DM Sans',sans-serif; font-weight:600; font-size:.88rem; color:var(--text-mid); cursor:pointer; }
@@ -162,20 +212,21 @@
     <h2>Finzo</h2>
   </div>
   <div class="sidebar-section-label">Main</div>
-  <a class="nav-item" href="#"><span class="nav-icon">🏠</span> Dashboard</a>
-  <a class="nav-item" href="#"><span class="nav-icon">💳</span> Transactions</a>
-  <a class="nav-item active" href="#"><span class="nav-icon">🎯</span> Budgets</a>
-  <a class="nav-item" href="#"><span class="nav-icon">🗂️</span> Categories</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('dashboard'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🏠</span> Dashboard</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('transaction'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">💳</span> Transactions</a>
+  <a class="nav-item active" href="<?= htmlspecialchars(userPageUrl('budget'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🎯</span> Budgets</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('category'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🗂️</span> Categories</a>
   <div class="sidebar-section-label" style="margin-top:18px;">Collaboration</div>
-  <a class="nav-item" href="#"><span class="nav-icon">👥</span> My Groups</a>
-  <a class="nav-item" href="#"><span class="nav-icon">🔔</span> Alerts</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('group'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">👥</span> My Groups</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('alert'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🔔</span> Alerts</a>
   <div class="sidebar-spacer"></div>
   <div class="sidebar-user">
-    <div class="user-ava">KM</div>
-    <div>
-      <div class="user-name">Karim M.</div>
-      <div class="user-plan">Free plan</div>
+    <div class="user-ava"><?= htmlspecialchars($displayInitials, ENT_QUOTES, 'UTF-8') ?></div>
+    <div class="sidebar-user-info">
+      <div class="user-name"><a href="<?= htmlspecialchars(userPageUrl('profile'), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') ?></a></div>
+      <div class="user-plan"><?= htmlspecialchars(($currentUser['role'] ?? 'user') . ' plan', ENT_QUOTES, 'UTF-8') ?></div>
     </div>
+    <a class="btn-logout" href="<?= htmlspecialchars(userPageUrl('logout'), ENT_QUOTES, 'UTF-8') ?>">Logout</a>
   </div>
 </aside>
 
@@ -195,19 +246,19 @@
   <div class="stat-strip">
     <div class="stat-cell">
       <div class="label">Total budgeted</div>
-      <div class="value v-default">2500 TND</div>
+      <div class="value v-default"><?= number_format((float) $budgetSummary['budget'], 0, '.', ',') ?> TND</div>
     </div>
     <div class="stat-cell">
       <div class="label">Total spent</div>
-      <div class="value v-red">500 TND</div>
+      <div class="value v-red"><?= number_format((float) $budgetSummary['spent'], 0, '.', ',') ?> TND</div>
     </div>
     <div class="stat-cell">
       <div class="label">Remaining</div>
-      <div class="value v-dark">970 TND</div>
+      <div class="value v-dark"><?= number_format((float) $budgetSummary['remaining'], 0, '.', ',') ?> TND</div>
     </div>
     <div class="stat-cell">
       <div class="label">Budget active</div>
-      <div class="value v-dark">5</div>
+      <div class="value v-dark"><?= (int) $budgetSummary['active'] ?></div>
     </div>
   </div>
 
@@ -216,73 +267,59 @@
     <div class="alert-left">
       <div class="alert-icon">⚠️</div>
       <div>
-        <div class="alert-title">Housing budget is 95% used</div>
-        <div class="alert-sub">You have only $50 left for housing</div>
+        <div class="alert-title"><?= htmlspecialchars(($budgetAlerts[0]['name'] ?? 'No budget alert yet') . ' budget is ' . (($budgetAlerts[0]['percent'] ?? 0)) . '% used', ENT_QUOTES, 'UTF-8') ?></div>
+        <div class="alert-sub"><?= isset($budgetAlerts[0]) ? 'You have only ' . number_format((float) $budgetAlerts[0]['remaining'], 0, '.', ',') . ' TND left for ' . htmlspecialchars($budgetAlerts[0]['name'], ENT_QUOTES, 'UTF-8') : 'Add a budget to see alerts here' ?></div>
       </div>
     </div>
-    <a class="alert-review" href="#">Review →</a>
+    <a class="alert-review" href="<?= htmlspecialchars(userPageUrl('alert'), ENT_QUOTES, 'UTF-8') ?>">Review →</a>
   </div>
 
   <!-- Budget Grid -->
   <div class="budget-grid">
 
-    <!-- Food -->
-    <div class="budget-card">
-      <div class="budget-card-header">
-        <div class="b-dot" style="background:#f5c842"></div>
-        <h4>Food</h4>
+    <?php if (empty($budgetRecords)): ?>
+      <div class="budget-card" style="grid-column:1 / -1;">
+        <div class="budget-card-header">
+          <div class="b-dot" style="background:#c8beff"></div>
+          <h4>No budgets yet</h4>
+        </div>
+        <div class="b-spent">Create a budget to start tracking category spending.</div>
       </div>
-      <div class="b-spent"><strong>640 TND</strong> of 800 TND</div>
-      <div class="prog-bg"><div class="prog-fill" style="width:80%;background:#f5c842"></div></div>
-      <div class="b-footer">
-        <div class="b-remaining">160 TND</div>
-        <div class="b-pct pct-warn">80% used</div>
-      </div>
-    </div>
+    <?php else: ?>
+      <?php foreach ($budgetRecords as $index => $row): ?>
+        <?php
+          $budget = (float) ($row['budget'] ?? $row['limit'] ?? 0);
+          $spent = (float) ($row['spent'] ?? 0);
+          $percent = $budget > 0 ? min(100, (int) round(($spent / $budget) * 100)) : 0;
+          $remaining = max(0, $budget - $spent);
+          $color = userCategoryColor($index);
+          $badgeClass = $percent >= 90 ? 'pct-danger' : ($percent >= 80 ? 'pct-warn' : 'pct-ok');
+        ?>
+        <div class="budget-card">
+          <div class="budget-card-header">
+            <div class="budget-card-title">
+              <div class="b-dot" style="background:<?= $color ?>"></div>
+              <h4><?= htmlspecialchars($row['categoryName'] ?: ($row['note'] ?: ('Budget #' . ($row['idBudget'] ?? ''))), ENT_QUOTES, 'UTF-8') ?></h4>
+            </div>
+            <div class="budget-card-actions">
+              <a class="budget-action" href="<?= htmlspecialchars(userPageUrl('budget') . '?edit=' . (int) ($row['idBudget'] ?? 0), ENT_QUOTES, 'UTF-8') ?>">✏️</a>
+              <form method="post" action="<?= htmlspecialchars(userPageUrl('budget'), ENT_QUOTES, 'UTF-8') ?>" onsubmit="return confirm('Delete this budget?');" style="display:inline;">
+                <input type="hidden" name="crud_action" value="delete"/>
+                <input type="hidden" name="id" value="<?= (int) ($row['idBudget'] ?? 0) ?>"/>
+                <button class="budget-action" type="submit">🗑️</button>
+              </form>
+            </div>
+          </div>
+          <div class="b-spent">Remaining: <strong><?= number_format($remaining, 0, '.', ',') ?> TND</strong></div>
+          <div class="prog-bg"><div class="prog-fill" style="width:<?= $percent ?>%;background:<?= $color ?>"></div></div>
+          <div class="b-footer">
+            <div class="b-remaining">Limit: <?= number_format($budget, 0, '.', ',') ?> TND</div>
+            <div class="b-pct <?= $badgeClass ?>"><?= $percent ?>% used</div>
+          </div>
+        </div>
+      <?php endforeach; ?>
+    <?php endif; ?>
 
-    <!-- Housing -->
-    <div class="budget-card">
-      <div class="budget-card-header">
-        <div class="b-dot" style="background:var(--red)"></div>
-        <h4>Housing</h4>
-      </div>
-      <div class="b-spent"><strong>950 TND</strong> of 1000 TND</div>
-      <div class="prog-bg"><div class="prog-fill" style="width:95%;background:var(--red)"></div></div>
-      <div class="b-footer">
-        <div class="b-remaining">50 TND</div>
-        <div class="b-pct pct-danger">95% used</div>
-      </div>
-    </div>
-
-    <!-- Transport -->
-    <div class="budget-card">
-      <div class="budget-card-header">
-        <div class="b-dot" style="background:var(--teal)"></div>
-        <h4>Transport</h4>
-      </div>
-      <div class="b-spent"><strong>180 TND</strong> of 400 TND</div>
-      <div class="prog-bg"><div class="prog-fill" style="width:30%;background:var(--teal)"></div></div>
-      <div class="b-footer">
-        <div class="b-remaining">160 TND</div>
-        <div class="b-pct pct-ok">30% used</div>
-      </div>
-    </div>
-
-    <!-- Health -->
-    <div class="budget-card">
-      <div class="budget-card-header">
-        <div class="b-dot" style="background:var(--purple)"></div>
-        <h4>Health</h4>
-      </div>
-      <div class="b-spent"><strong>150 TND</strong> of 500 TND</div>
-      <div class="prog-bg"><div class="prog-fill" style="width:30%;background:var(--purple)"></div></div>
-      <div class="b-footer">
-        <div class="b-remaining">350 TND</div>
-        <div class="b-pct pct-ok">30% used</div>
-      </div>
-    </div>
-
-    <!-- Create new budget -->
     <div class="create-card" onclick="openModal()">
       <div class="create-plus">＋</div>
       <h4>Create new budget</h4>
@@ -293,80 +330,92 @@
 </main>
 
 <!-- ── MODAL ── -->
-<div class="modal-overlay" id="modalOverlay" onclick="handleOverlay(event)">
+<div class="modal-overlay<?= $editingBudget ? ' open' : '' ?>" id="modalOverlay" onclick="handleOverlay(event)">
   <div class="modal">
     <div class="modal-header">
       <div>
-        <h3>Create New Budget</h3>
+        <h3><?= htmlspecialchars($budgetModalTitle, ENT_QUOTES, 'UTF-8') ?></h3>
         <p>Set a spending limit for a category</p>
       </div>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
 
-    <!-- Budget Limit Amount -->
-    <div class="form-group">
-      <label>Budget Limit <span>*</span></label>
-    </div>
-    <div class="amount-display">
-      <input type="number" placeholder="0.00" step="0.01" min="0"/>
-      <span class="currency">TND</span>
-    </div>
+    <form method="post" action="<?= htmlspecialchars(userPageUrl('budget'), ENT_QUOTES, 'UTF-8') ?>">
+      <input type="hidden" name="crud_action" value="<?= htmlspecialchars($budgetModalAction, ENT_QUOTES, 'UTF-8') ?>"/>
+      <input type="hidden" name="id" value="<?= htmlspecialchars($editingBudget['idBudget'] ?? '', ENT_QUOTES, 'UTF-8') ?>"/>
 
-    <!-- Period + Start Date -->
-    <div class="form-row-2">
-      <div class="form-group" style="margin-bottom:0">
-        <label>Period <span>*</span></label>
-        <select>
-          <option>Monthly</option>
-          <option>Weekly</option>
-          <option>Yearly</option>
-        </select>
+      <!-- Budget Name -->
+      <div class="form-group">
+        <label>Budget Name <span>*</span></label>
+        <input type="text" name="name" placeholder="e.g. Grocery savings" value="<?= htmlspecialchars($budgetModalName, ENT_QUOTES, 'UTF-8') ?>" required/>
       </div>
-      <div class="form-group" style="margin-bottom:0">
-        <label>Start Date <span>*</span></label>
-        <div class="date-wrap">
-          <input type="date" id="budgetDate"/>
-          <span class="date-icon">📅</span>
+
+      <!-- Budget Limit Amount -->
+      <div class="form-group">
+        <label>Budget Limit <span>*</span></label>
+      </div>
+      <div class="amount-display">
+        <input type="number" name="limit" placeholder="0.00" step="0.01" min="0" value="<?= htmlspecialchars((string) $budgetModalLimit, ENT_QUOTES, 'UTF-8') ?>" required/>
+        <span class="currency">TND</span>
+      </div>
+
+      <!-- Period + Start Date -->
+      <div class="form-row-2">
+        <div class="form-group" style="margin-bottom:0">
+          <label>Period <span>*</span></label>
+          <select name="period" required>
+            <option value="Monthly" <?= $budgetModalPeriod === 'Monthly' ? 'selected' : '' ?>>Monthly</option>
+            <option value="Weekly" <?= $budgetModalPeriod === 'Weekly' ? 'selected' : '' ?>>Weekly</option>
+            <option value="Yearly" <?= $budgetModalPeriod === 'Yearly' ? 'selected' : '' ?>>Yearly</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label>Start Date <span>*</span></label>
+          <div class="date-wrap">
+            <input type="date" id="budgetDate" name="startDate" value="<?= htmlspecialchars($budgetModalStartDate, ENT_QUOTES, 'UTF-8') ?>" required/>
+            <span class="date-icon">📅</span>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- Category -->
-    <div class="form-group" style="margin-top:14px;">
-      <label>Category <span>*</span></label>
-      <div class="cat-chips">
-        <button class="cat-chip active" onclick="setChip(this)">Food</button>
-        <button class="cat-chip" onclick="setChip(this)">Transport</button>
-        <button class="cat-chip" onclick="setChip(this)">Housing</button>
-        <button class="cat-chip" onclick="setChip(this)">Health</button>
-        <button class="cat-chip" onclick="setChip(this)">Shopping</button>
-        <button class="cat-chip" onclick="setChip(this)">Other</button>
+      <!-- Category -->
+      <div class="form-group" style="margin-top:14px;">
+        <label>Category <span>*</span></label>
+        <select name="categoryId" required>
+          <?php foreach ($categories as $category): ?>
+            <option value="<?= htmlspecialchars($category['idCategory'], ENT_QUOTES, 'UTF-8') ?>" <?= (string) $budgetModalCategoryId === (string) $category['idCategory'] ? 'selected' : '' ?>><?= htmlspecialchars($category['name'], ENT_QUOTES, 'UTF-8') ?></option>
+          <?php endforeach; ?>
+        </select>
       </div>
-    </div>
 
-    <!-- Note -->
-    <div class="form-group" style="margin-top:14px;">
-      <label>Note (optional)</label>
-      <textarea placeholder="Add a short note about this transaction…"></textarea>
-    </div>
+      <!-- Alert threshold -->
+      <div class="form-group" style="margin-top:14px;">
+        <label>Alert at (%)</label>
+        <input type="number" name="sendAlertAt" min="0" max="100" value="<?= htmlspecialchars((string) $budgetModalSendAlertAt, ENT_QUOTES, 'UTF-8') ?>" placeholder="80"/>
+      </div>
 
-    <div class="modal-footer">
-      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="btn-create">➕ Create Budget</button>
-    </div>
+      <!-- Note -->
+      <div class="form-group" style="margin-top:14px;">
+        <label>Note (optional)</label>
+        <textarea name="note" placeholder="Add a short note about this budget…"><?= htmlspecialchars($budgetModalNote, ENT_QUOTES, 'UTF-8') ?></textarea>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn-cancel" onclick="closeModal()">Cancel</button>
+        <button class="btn-create" type="submit"><?= htmlspecialchars($budgetModalButton, ENT_QUOTES, 'UTF-8') ?></button>
+      </div>
+    </form>
   </div>
 </div>
 
 <script>
-  document.getElementById('budgetDate').valueAsDate = new Date();
+  if (!document.getElementById('budgetDate').value) {
+    document.getElementById('budgetDate').valueAsDate = new Date();
+  }
 
   function openModal()  { document.getElementById('modalOverlay').classList.add('open'); }
   function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
   function handleOverlay(e) { if (e.target === e.currentTarget) closeModal(); }
-  function setChip(el) {
-    document.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
-    el.classList.add('active');
-  }
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 </script>
 </body>

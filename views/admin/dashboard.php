@@ -1,3 +1,117 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+require_once __DIR__ . '/../../config/database.php';
+
+function formatCurrency($amount) {
+    return '$' . number_format((float) $amount, 0, '.', ',');
+}
+
+function safePercent($value) {
+    return min(100, max(0, (int) round($value)));
+}
+
+function buildChartPath(array $values, int $width = 500, int $height = 160, int $paddingTop = 20, int $paddingBottom = 20) {
+    if (empty($values)) {
+        return ['line' => '', 'area' => ''];
+    }
+
+    $count = count($values);
+    $maxValue = max(1, max($values));
+    $dx = $count > 1 ? $width / ($count - 1) : 0;
+    $points = [];
+
+    foreach ($values as $index => $value) {
+        $x = round($index * $dx, 1);
+        $scaled = min(1, max(0, $value / $maxValue));
+        $y = round($paddingTop + ($height - $paddingTop - $paddingBottom) * (1 - $scaled), 1);
+        $points[] = "$x,$y";
+    }
+
+    $line = 'M' . $points[0];
+    foreach (array_slice($points, 1) as $point) {
+        $line .= ' L' . $point;
+    }
+
+    $area = $line . ' L ' . $width . ',' . ($height - $paddingBottom) . ' L 0,' . ($height - $paddingBottom) . ' Z';
+    return ['line' => $line, 'area' => $area];
+}
+
+$totalRevenueStmt = $pdo->query("SELECT COALESCE(SUM(amout), 0) AS totalRevenue FROM transaction WHERE transCategory = 'INCOME'");
+$totalRevenue = (float) $totalRevenueStmt->fetchColumn();
+
+$totalExpensesStmt = $pdo->query("SELECT COALESCE(SUM(amout), 0) AS totalExpenses FROM transaction WHERE transCategory = 'EXPENSE'");
+$totalExpenses = (float) $totalExpensesStmt->fetchColumn();
+
+$availableBalance = $totalRevenue - $totalExpenses;
+
+$budgetTotalsStmt = $pdo->query("SELECT COALESCE(SUM(`limit`), 0) AS budgetLimit FROM budget");
+$budgetLimit = (float) $budgetTotalsStmt->fetchColumn();
+
+$budgetSpentStmt = $pdo->query("SELECT COALESCE(SUM(t.amout), 0) AS spent FROM transaction t INNER JOIN budgettransaction bt ON bt.transactionId = t.idTransaction WHERE t.transCategory = 'EXPENSE'");
+$budgetSpent = (float) $budgetSpentStmt->fetchColumn();
+
+$budgetUsagePct = $budgetLimit > 0 ? min(100, (int) round(($budgetSpent / $budgetLimit) * 100)) : 0;
+$budgetLeft = max(0, $budgetLimit - $budgetSpent);
+$budgetStatus = $budgetUsagePct >= 75 ? 'At Risk' : ($budgetUsagePct >= 40 ? 'On Track' : 'Healthy');
+
+$transactionCountStmt = $pdo->query("SELECT COUNT(*) FROM transaction");
+$transactionCount = (int) $transactionCountStmt->fetchColumn();
+
+$userCountStmt = $pdo->query("SELECT COUNT(*) FROM users");
+$userCount = (int) $userCountStmt->fetchColumn();
+
+$expenseTrendStmt = $pdo->prepare("SELECT DATE_FORMAT(date, '%b %e') AS dateLabel, COALESCE(SUM(amout),0) AS amount FROM transaction WHERE transCategory = 'EXPENSE' AND date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) GROUP BY DATE(date) ORDER BY DATE(date) ASC");
+$expenseTrendStmt->execute();
+$expenseTrendRows = $expenseTrendStmt->fetchAll(PDO::FETCH_ASSOC);
+if (empty($expenseTrendRows)) {
+    for ($day = 29; $day >= 0; $day--) {
+        $expenseTrendRows[] = ['dateLabel' => date('M j', strtotime("-{$day} days")), 'amount' => 0];
+    }
+}
+$expenseTrendValues = array_map(fn($row) => (float) $row['amount'], $expenseTrendRows);
+$expenseTrendPath = buildChartPath($expenseTrendValues);
+
+$categoryExpenseStmt = $pdo->prepare("SELECT c.name AS categoryName, COALESCE(SUM(t.amout),0) AS amount FROM category c LEFT JOIN transaction t ON t.categoryId = c.idCategory AND t.transCategory = 'EXPENSE' GROUP BY c.idCategory, c.name ORDER BY amount DESC LIMIT 4");
+$categoryExpenseStmt->execute();
+$categoryExpenses = $categoryExpenseStmt->fetchAll(PDO::FETCH_ASSOC);
+$totalCategoryExpense = max(1, array_sum(array_map(fn($row) => (float) $row['amount'], $categoryExpenses)));
+$categoryColors = ['#4f46e5', '#3b82f6', '#f59e0b', '#10b981'];
+$categorySegments = [];
+$offset = 0;
+$radius = 52;
+$circumference = 2 * pi() * $radius;
+foreach ($categoryExpenses as $index => $categoryRow) {
+    $amount = (float) $categoryRow['amount'];
+    $pct = $totalCategoryExpense > 0 ? $amount / $totalCategoryExpense : 0;
+    $dash = round($circumference * $pct, 2);
+    $categorySegments[] = [
+        'color' => $categoryColors[$index % count($categoryColors)],
+        'dash' => $dash,
+        'offset' => round($offset, 2),
+        'label' => $categoryRow['categoryName'] ?: 'Other',
+        'pct' => round($pct * 100),
+        'amount' => $amount,
+    ];
+    $offset += $dash;
+}
+
+$monthlyComparisonStmt = $pdo->prepare("SELECT DATE_FORMAT(date, '%b') AS monthLabel, SUM(CASE WHEN transCategory = 'INCOME' THEN amout ELSE 0 END) AS income, SUM(CASE WHEN transCategory = 'EXPENSE' THEN amout ELSE 0 END) AS expenses FROM transaction WHERE date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH) GROUP BY DATE_FORMAT(date, '%Y-%m') ORDER BY MIN(date) ASC");
+$monthlyComparisonStmt->execute();
+$monthlyComparisonRows = $monthlyComparisonStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$monthlyLabels = array_column($monthlyComparisonRows, 'monthLabel');
+$monthlyIncomes = array_map(fn($row) => (float) $row['income'], $monthlyComparisonRows);
+$monthlyExpenses = array_map(fn($row) => (float) $row['expenses'], $monthlyComparisonRows);
+$maxMonthly = max(1, max(array_merge($monthlyIncomes, $monthlyExpenses)));
+
+$recentTransStmt = $pdo->prepare("SELECT t.date, u.name AS userName, u.lastName AS userLastName, c.name AS categoryName, t.transCategory, t.amout FROM transaction t LEFT JOIN users u ON u.id = t.userId LEFT JOIN category c ON c.idCategory = t.categoryId ORDER BY t.date DESC LIMIT 5");
+$recentTransStmt->execute();
+$recentTransactions = $recentTransStmt->fetchAll(PDO::FETCH_ASSOC);
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -27,36 +141,22 @@
     </div>
   </div>
   <nav class="sidebar-nav">
-    <a class="nav-item active" href="#"><span class="nav-icon">📊</span> Dashboard</a>
-    <a class="nav-item" href="#"><span class="nav-icon">👥</span> Users</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🎯</span> Budgets</a>
-    <a class="nav-item" href="#"><span class="nav-icon">💳</span> Transactions <span class="nav-badge">4</span></a>
-    <a class="nav-item" href="#"><span class="nav-icon">🗂️</span> Categories</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🔔</span> Alerts</a>
-    <a class="nav-item" href="#"><span class="nav-icon">⚙️</span> Settings</a>
+    <a class="nav-item active" href="dashboard.php"><span class="nav-icon">📊</span> Dashboard</a>
+    <a class="nav-item" href="users.php"><span class="nav-icon">👥</span> Users</a>
+    <a class="nav-item" href="budgets.php"><span class="nav-icon">🎯</span> Budgets</a>
+    <a class="nav-item" href="transactions.php"><span class="nav-icon">💳</span> Transactions <span class="nav-badge"><?= number_format($transactionCount) ?></span></a>
+    <a class="nav-item" href="categories.php"><span class="nav-icon">🗂️</span> Categories</a>
+    <a class="nav-item" href="alerts.php"><span class="nav-icon">🔔</span> Alerts</a>
+    <a class="nav-item" href="export_data.php"><span class="nav-icon">⬇️</span> Export Data</a>
+    <a class="nav-item" href="profile.php"><span class="nav-icon">⚙️</span> Settings</a>
   </nav>
   <div class="sidebar-footer">
-    <button class="new-report-btn">＋ New Report</button>
+    <a class="btn-logout" href="/pocket_money/views/logout.php">Logout</a>
   </div>
 </aside>
 
 <!-- MAIN -->
 <div class="main">
-  <!-- TOP NAV -->
-  <div class="topnav">
-    <div class="topnav-search">
-      <span style="color:#9ca3af;font-size:.9rem">🔍</span>
-      <input type="text" placeholder="Search analytics..."/>
-    </div>
-    <div class="topnav-right">
-      <div class="notif-btn">🔔<div class="notif-dot"></div></div>
-      <div class="profile-btn">
-        <div class="profile-ava">JD</div>
-        <span>Profile Settings</span>
-      </div>
-    </div>
-  </div>
-
   <div class="content">
     <!-- PAGE HEADER -->
     <div class="page-header">
@@ -65,8 +165,7 @@
         <p>Welcome back. Here's what's happening with your finances today.</p>
       </div>
       <div class="header-actions">
-        <button class="btn-period">📅 This Month</button>
-        <button class="btn-export">↑ Export</button>
+        <a class="btn-export" href="export_data.php?type=transactions">↑ Export</a>
       </div>
     </div>
 
@@ -76,18 +175,22 @@
       <div class="stat-card">
         <div class="stat-top">
           <div class="stat-icon-wrap si-blue">📈</div>
-          <div class="stat-badge badge-green">▲ 12.5%</div>
+          <div class="stat-badge badge-green"><?= $transactionCount > 0 ? '▲ ' . safePercent($totalRevenue ? (($totalRevenue - $totalExpenses) / max(1, $totalRevenue)) * 100 : 0) . '%' : '—' ?></div>
         </div>
         <div class="stat-label">Total Revenue</div>
-        <div class="stat-value">$124,500</div>
+        <div class="stat-value"><?= htmlspecialchars(formatCurrency($totalRevenue), ENT_QUOTES, 'UTF-8') ?></div>
         <div class="sparkline">
-          <div class="spark-bar" style="height:30%;background:#bfdbfe"></div>
-          <div class="spark-bar" style="height:45%;background:#bfdbfe"></div>
-          <div class="spark-bar" style="height:35%;background:#bfdbfe"></div>
-          <div class="spark-bar" style="height:55%;background:#93c5fd"></div>
-          <div class="spark-bar" style="height:50%;background:#93c5fd"></div>
-          <div class="spark-bar" style="height:70%;background:#60a5fa"></div>
-          <div class="spark-bar" style="height:90%;background:#3b82f6"></div>
+          <?php
+          $sparkValues = array_slice(array_reverse($expenseTrendValues), 0, 7);
+          if (empty($sparkValues)) {
+              $sparkValues = array_fill(0, 7, 0);
+          }
+          $maxSpark = max(1, max($sparkValues));
+          foreach ($sparkValues as $value):
+              $height = (int) round(($value / $maxSpark) * 100);
+          ?>
+            <div class="spark-bar" style="height:<?= $height ?>%;background:#bfdbfe"></div>
+          <?php endforeach; ?>
         </div>
       </div>
 
@@ -95,18 +198,22 @@
       <div class="stat-card">
         <div class="stat-top">
           <div class="stat-icon-wrap si-red">📉</div>
-          <div class="stat-badge badge-red">▲ 4.2%</div>
+          <div class="stat-badge badge-red"><?= $transactionCount > 0 ? '▲ ' . safePercent($totalExpenses ? (($budgetSpent - $totalExpenses) / max(1, $totalExpenses)) * 100 : 0) . '%' : '—' ?></div>
         </div>
         <div class="stat-label">Total Expenses</div>
-        <div class="stat-value">$45,200</div>
+        <div class="stat-value"><?= htmlspecialchars(formatCurrency($totalExpenses), ENT_QUOTES, 'UTF-8') ?></div>
         <div class="sparkline">
-          <div class="spark-bar" style="height:40%;background:#fecaca"></div>
-          <div class="spark-bar" style="height:60%;background:#fecaca"></div>
-          <div class="spark-bar" style="height:35%;background:#fca5a5"></div>
-          <div class="spark-bar" style="height:70%;background:#fca5a5"></div>
-          <div class="spark-bar" style="height:45%;background:#f87171"></div>
-          <div class="spark-bar" style="height:55%;background:#f87171"></div>
-          <div class="spark-bar" style="height:65%;background:#ef4444"></div>
+          <?php
+          $expenseSpark = array_slice(array_reverse($expenseTrendValues), 0, 7);
+          if (empty($expenseSpark)) {
+              $expenseSpark = array_fill(0, 7, 0);
+          }
+          $maxExpenseSpark = max(1, max($expenseSpark));
+          foreach ($expenseSpark as $value):
+              $height = (int) round(($value / $maxExpenseSpark) * 100);
+          ?>
+            <div class="spark-bar" style="height:<?= $height ?>%;background:#fecaca"></div>
+          <?php endforeach; ?>
         </div>
       </div>
 
@@ -114,18 +221,22 @@
       <div class="stat-card">
         <div class="stat-top">
           <div class="stat-icon-wrap si-purple">💳</div>
-          <div class="stat-badge badge-blue">Healthy</div>
+          <div class="stat-badge badge-blue"><?= htmlspecialchars($availableBalance >= 0 ? 'Healthy' : 'Negative', ENT_QUOTES, 'UTF-8') ?></div>
         </div>
         <div class="stat-label">Available Balance</div>
-        <div class="stat-value">$79,300</div>
+        <div class="stat-value"><?= htmlspecialchars(formatCurrency($availableBalance), ENT_QUOTES, 'UTF-8') ?></div>
         <div class="sparkline">
-          <div class="spark-bar" style="height:50%;background:#e9d5ff"></div>
-          <div class="spark-bar" style="height:55%;background:#d8b4fe"></div>
-          <div class="spark-bar" style="height:65%;background:#c4b5fd"></div>
-          <div class="spark-bar" style="height:60%;background:#a78bfa"></div>
-          <div class="spark-bar" style="height:75%;background:#8b5cf6"></div>
-          <div class="spark-bar" style="height:80%;background:#7c3aed"></div>
-          <div class="spark-bar" style="height:90%;background:#6d28d9"></div>
+          <?php
+          $balanceSpark = array_slice(array_reverse($expenseTrendValues), 0, 7);
+          if (empty($balanceSpark)) {
+              $balanceSpark = array_fill(0, 7, 0);
+          }
+          $maxBalanceSpark = max(1, max($balanceSpark));
+          foreach ($balanceSpark as $value):
+              $height = (int) round(($value / $maxBalanceSpark) * 100);
+          ?>
+            <div class="spark-bar" style="height:<?= $height ?>%;background:#e9d5ff"></div>
+          <?php endforeach; ?>
         </div>
       </div>
 
@@ -133,13 +244,13 @@
       <div class="stat-card">
         <div class="stat-top">
           <div class="stat-icon-wrap si-orange">🎯</div>
-          <div class="stat-badge badge-orange">On Track</div>
+          <div class="stat-badge badge-orange"><?= htmlspecialchars($budgetStatus, ENT_QUOTES, 'UTF-8') ?></div>
         </div>
         <div class="stat-label">Budget Usage</div>
         <div class="gauge-wrap">
-          <div class="gauge-pct">62%</div>
-          <div class="gauge-bg"><div class="gauge-fill" style="width:62%"></div></div>
-          <div class="gauge-sub"><span>$26,000 left</span><span>Limit: $72,200</span></div>
+          <div class="gauge-pct"><?= htmlspecialchars($budgetUsagePct, ENT_QUOTES, 'UTF-8') ?>%</div>
+          <div class="gauge-bg"><div class="gauge-fill" style="width:<?= htmlspecialchars($budgetUsagePct, ENT_QUOTES, 'UTF-8') ?>%"></div></div>
+          <div class="gauge-sub"><span><?= htmlspecialchars(formatCurrency($budgetLeft), ENT_QUOTES, 'UTF-8') ?> left</span><span>Limit: <?= htmlspecialchars(formatCurrency($budgetLimit), ENT_QUOTES, 'UTF-8') ?></span></div>
         </div>
       </div>
     </div>
@@ -167,11 +278,9 @@
           <line x1="0" y1="80" x2="500" y2="80" stroke="#f3f4f6" stroke-width="1"/>
           <line x1="0" y1="120" x2="500" y2="120" stroke="#f3f4f6" stroke-width="1"/>
           <!-- area fill -->
-          <path d="M0,120 C40,110 60,90 100,95 C140,100 160,130 200,100 C240,70 260,40 300,30 C340,20 360,60 400,55 C440,50 470,70 500,65 L500,160 L0,160 Z" fill="url(#lineGrad)"/>
+          <path d="<?= htmlspecialchars($expenseTrendPath['area'], ENT_QUOTES, 'UTF-8') ?>" fill="url(#lineGrad)"/>
           <!-- line -->
-          <path d="M0,120 C40,110 60,90 100,95 C140,100 160,130 200,100 C240,70 260,40 300,30 C340,20 360,60 400,55 C440,50 470,70 500,65" fill="none" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-          <!-- peak dot -->
-          <circle cx="300" cy="30" r="5" fill="#fff" stroke="#4f46e5" stroke-width="2.5"/>
+          <path d="<?= htmlspecialchars($expenseTrendPath['line'], ENT_QUOTES, 'UTF-8') ?>" fill="none" stroke="#4f46e5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </div>
 
@@ -185,26 +294,18 @@
         </div>
         <div class="donut-wrap">
           <svg width="140" height="140" viewBox="0 0 140 140">
-            <!-- Housing 42% -->
             <circle cx="70" cy="70" r="52" fill="none" stroke="#e5e7eb" stroke-width="22"/>
-            <circle cx="70" cy="70" r="52" fill="none" stroke="#4f46e5" stroke-width="22"
-              stroke-dasharray="136 191" stroke-dashoffset="0" transform="rotate(-90 70 70)"/>
-            <!-- Marketing 28% -->
-            <circle cx="70" cy="70" r="52" fill="none" stroke="#3b82f6" stroke-width="22"
-              stroke-dasharray="91 236" stroke-dashoffset="-136" transform="rotate(-90 70 70)"/>
-            <!-- SaaS 18% -->
-            <circle cx="70" cy="70" r="52" fill="none" stroke="#f59e0b" stroke-width="22"
-              stroke-dasharray="58 269" stroke-dashoffset="-227" transform="rotate(-90 70 70)"/>
-            <!-- other 12% -->
-            <circle cx="70" cy="70" r="52" fill="none" stroke="#e5e7eb" stroke-width="22"
-              stroke-dasharray="39 288" stroke-dashoffset="-285" transform="rotate(-90 70 70)"/>
-            <text x="70" y="65" text-anchor="middle" font-family="Sora,sans-serif" font-size="13" font-weight="800" fill="#111827">$45.2k</text>
+            <?php foreach ($categorySegments as $segment): ?>
+              <circle cx="70" cy="70" r="52" fill="none" stroke="<?= htmlspecialchars($segment['color'], ENT_QUOTES, 'UTF-8') ?>" stroke-width="22"
+                stroke-dasharray="<?= htmlspecialchars($segment['dash'], ENT_QUOTES, 'UTF-8') ?> <?= htmlspecialchars(max(0, $circumference - $segment['dash']), ENT_QUOTES, 'UTF-8') ?>" stroke-dashoffset="-<?= htmlspecialchars($segment['offset'], ENT_QUOTES, 'UTF-8') ?>" transform="rotate(-90 70 70)"/>
+            <?php endforeach; ?>
+            <text x="70" y="65" text-anchor="middle" font-family="Sora,sans-serif" font-size="13" font-weight="800" fill="#111827"><?= htmlspecialchars(formatCurrency(array_sum(array_column($categoryExpenses, 'amount'))), ENT_QUOTES, 'UTF-8') ?></text>
             <text x="70" y="80" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9" fill="#6b7280">TOTAL</text>
           </svg>
           <div class="donut-legend" style="width:100%">
-            <div class="dl-item"><div class="dl-left"><div class="dl-dot" style="background:#4f46e5"></div><span class="dl-name">Housing</span></div><span class="dl-pct">42%</span></div>
-            <div class="dl-item"><div class="dl-left"><div class="dl-dot" style="background:#3b82f6"></div><span class="dl-name">Marketing</span></div><span class="dl-pct">28%</span></div>
-            <div class="dl-item"><div class="dl-left"><div class="dl-dot" style="background:#f59e0b"></div><span class="dl-name">SaaS Tools</span></div><span class="dl-pct">18%</span></div>
+            <?php foreach ($categorySegments as $segment): ?>
+              <div class="dl-item"><div class="dl-left"><div class="dl-dot" style="background:<?= htmlspecialchars($segment['color'], ENT_QUOTES, 'UTF-8') ?>"></div><span class="dl-name"><?= htmlspecialchars($segment['label'], ENT_QUOTES, 'UTF-8') ?></span></div><span class="dl-pct"><?= htmlspecialchars($segment['pct'], ENT_QUOTES, 'UTF-8') ?>%</span></div>
+            <?php endforeach; ?>
           </div>
         </div>
       </div>
@@ -223,20 +324,12 @@
         </div>
       </div>
       <div class="bar-chart-monthly" style="margin-top:18px;height:130px;align-items:flex-end;display:flex;gap:14px;">
-        <!-- Jan -->
-        <div class="bcm-group"><div class="bcm-bars"><div class="bcm-bar bar-blue" style="height:70px"></div><div class="bcm-bar bar-red" style="height:30px"></div></div><span class="bcm-label">Jan</span></div>
-        <!-- Feb -->
-        <div class="bcm-group"><div class="bcm-bars"><div class="bcm-bar bar-blue" style="height:90px"></div><div class="bcm-bar bar-red" style="height:50px"></div></div><span class="bcm-label">Feb</span></div>
-        <!-- Mar -->
-        <div class="bcm-group"><div class="bcm-bars"><div class="bcm-bar bar-blue" style="height:65px"></div><div class="bcm-bar bar-red" style="height:40px"></div></div><span class="bcm-label">Mar</span></div>
-        <!-- Apr -->
-        <div class="bcm-group"><div class="bcm-bars"><div class="bcm-bar bar-blue" style="height:80px"></div><div class="bcm-bar bar-red" style="height:35px"></div></div><span class="bcm-label">Apr</span></div>
-        <!-- May -->
-        <div class="bcm-group"><div class="bcm-bars"><div class="bcm-bar bar-blue" style="height:60px"></div><div class="bcm-bar bar-red" style="height:45px"></div></div><span class="bcm-label">May</span></div>
-        <!-- Jun -->
-        <div class="bcm-group"><div class="bcm-bars"><div class="bcm-bar bar-blue" style="height:100px"></div><div class="bcm-bar bar-red" style="height:55px"></div></div><span class="bcm-label">Jun</span></div>
-        <!-- Jul -->
-        <div class="bcm-group"><div class="bcm-bars"><div class="bcm-bar bar-blue" style="height:110px"></div><div class="bcm-bar bar-red" style="height:40px"></div></div><span class="bcm-label">Jul</span></div>
+        <?php foreach ($monthlyComparisonRows as $row):
+            $incomeHeight = (int) round((floatval($row['income']) / max(1, $maxMonthly)) * 100);
+            $expenseHeight = (int) round((floatval($row['expenses']) / max(1, $maxMonthly)) * 100);
+        ?>
+          <div class="bcm-group"><div class="bcm-bars"><div class="bcm-bar bar-blue" style="height:<?= $incomeHeight ?>px"></div><div class="bcm-bar bar-red" style="height:<?= $expenseHeight ?>px"></div></div><span class="bcm-label"><?= htmlspecialchars($row['monthLabel'], ENT_QUOTES, 'UTF-8') ?></span></div>
+        <?php endforeach; ?>
       </div>
     </div>
 
@@ -244,7 +337,7 @@
     <div class="tx-card">
       <div class="tx-header">
         <h3>Recent Transactions</h3>
-        <a class="view-all">View All</a>
+        <a class="view-all" href="transactions.php">View All</a>
       </div>
       <table>
         <thead>
@@ -257,34 +350,24 @@
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td class="td-date">Oct 24, 2023</td>
-            <td><div class="user-cell"><div class="user-cell-ava" style="background:#4f46e5">JD</div>Jane Doe</div></td>
-            <td><span class="td-cat">Marketing</span></td>
-            <td><span class="type-pill type-expense">↗ Expense</span></td>
-            <td class="td-amount amt-neg" style="text-align:right">–$1,240.00</td>
-          </tr>
-          <tr>
-            <td class="td-date">Oct 23, 2023</td>
-            <td><div class="user-cell"><div class="user-cell-ava" style="background:#059669">AS</div>Alex Smith</div></td>
-            <td><span class="td-cat">Sales</span></td>
-            <td><span class="type-pill type-income">✓ Income</span></td>
-            <td class="td-amount amt-pos" style="text-align:right">+$12,500.00</td>
-          </tr>
-          <tr>
-            <td class="td-date">Oct 22, 2023</td>
-            <td><div class="user-cell"><div class="user-cell-ava" style="background:#f59e0b">RK</div>Ryan Kim</div></td>
-            <td><span class="td-cat">Infrastructure</span></td>
-            <td><span class="type-pill type-expense">↗ Expense</span></td>
-            <td class="td-amount amt-neg" style="text-align:right">–$3,450.00</td>
-          </tr>
-          <tr>
-            <td class="td-date">Oct 21, 2023</td>
-            <td><div class="user-cell"><div class="user-cell-ava" style="background:#4f46e5">JD</div>Jane Doe</div></td>
-            <td><span class="td-cat">Software</span></td>
-            <td><span class="type-pill type-expense">↗ Expense</span></td>
-            <td class="td-amount amt-neg" style="text-align:right">–$820.00</td>
-          </tr>
+          <?php if (empty($recentTransactions)): ?>
+            <tr><td colspan="5" style="padding:20px 0;text-align:center;color:#6b7280;">No recent activity to show.</td></tr>
+          <?php else: ?>
+            <?php foreach ($recentTransactions as $transaction):
+              $isIncome = strtoupper($transaction['transCategory'] ?? '') === 'INCOME';
+              $amountValue = (float) ($transaction['amout'] ?? 0);
+              $userName = trim(($transaction['userName'] ?? '') . ' ' . ($transaction['userLastName'] ?? '')) ?: 'Unknown';
+              $categoryName = $transaction['categoryName'] ?: 'Uncategorized';
+            ?>
+              <tr>
+                <td class="td-date"><?= htmlspecialchars(date('M d, Y', strtotime($transaction['date'] ?? 'now')), ENT_QUOTES, 'UTF-8') ?></td>
+                <td><div class="user-cell"><div class="user-cell-ava" style="background:<?= $isIncome ? '#059669' : '#4f46e5' ?>"><?= htmlspecialchars(substr($userName, 0, 2), ENT_QUOTES, 'UTF-8') ?></div><?= htmlspecialchars($userName, ENT_QUOTES, 'UTF-8') ?></div></td>
+                <td><span class="td-cat"><?= htmlspecialchars($categoryName, ENT_QUOTES, 'UTF-8') ?></span></td>
+                <td><span class="type-pill <?= $isIncome ? 'type-income' : 'type-expense' ?>"><?= $isIncome ? '✓ Income' : '↗ Expense' ?></span></td>
+                <td class="td-amount <?= $isIncome ? 'amt-pos' : 'amt-neg' ?>" style="text-align:right"><?= $isIncome ? '+' : '–' ?><?= htmlspecialchars(formatCurrency($amountValue), ENT_QUOTES, 'UTF-8') ?></td>
+              </tr>
+            <?php endforeach; ?>
+          <?php endif; ?>
         </tbody>
       </table>
     </div>

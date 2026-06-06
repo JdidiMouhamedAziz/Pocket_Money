@@ -25,6 +25,18 @@
             $stmt->execute([$categotyId]);
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
+
+        // update budget category link
+        public function updateBudgetCategory($budgetId,$categoryId,$limitAmout){
+            $stmt = $this->pdo->prepare("UPDATE budgetcategory SET limitAmout=? WHERE budgetId=? AND categoryId=?");
+            return $stmt->execute([$limitAmout,$budgetId,$categoryId]);
+        }
+
+        // delete budget category link
+        public function deleteBudgetCategory($budgetId,$categoryId){
+            $stmt = $this->pdo->prepare("DELETE FROM budgetcategory WHERE budgetId=? AND categoryId=?");
+            return $stmt->execute([$budgetId,$categoryId]);
+        }
         
     }
 

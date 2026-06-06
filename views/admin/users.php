@@ -1,3 +1,49 @@
+<?php
+require_once __DIR__ . '/admin_helpers.php';
+
+$adminFlash = getAdminFlash();
+$editUser = null;
+if (!empty($_GET['editUser'])) {
+    $stmt = $pdo->prepare('SELECT * FROM users WHERE id = ? LIMIT 1');
+    $stmt->execute([$_GET['editUser']]);
+    $editUser = $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+$search = trim($_GET['search'] ?? '');
+$filterStatus = strtolower(trim($_GET['filterStatus'] ?? ''));
+$filterRole = strtolower(trim($_GET['filterRole'] ?? ''));
+$whereClauses = [];
+$queryParams = [];
+if ($search !== '') {
+    $whereClauses[] = '(name LIKE ? OR lastName LIKE ? OR email LIKE ? OR role LIKE ? OR status LIKE ?)';
+    $likeSearch = "%{$search}%";
+    $queryParams = array_merge($queryParams, [$likeSearch, $likeSearch, $likeSearch, $likeSearch, $likeSearch]);
+}
+if (in_array($filterStatus, ['active', 'pending', 'blocked', 'deleted'], true)) {
+    $whereClauses[] = 'LOWER(status) = ?';
+    $queryParams[] = $filterStatus;
+}
+if (in_array($filterRole, ['admin', 'user'], true)) {
+    $whereClauses[] = 'LOWER(role) = ?';
+    $queryParams[] = $filterRole;
+}
+$sql = 'SELECT * FROM users' . ($whereClauses ? ' WHERE ' . implode(' AND ', $whereClauses) : '') . ' ORDER BY updatedAt DESC';
+$userStmt = $pdo->prepare($sql);
+$userStmt->execute($queryParams);
+$users = $userStmt->fetchAll(PDO::FETCH_ASSOC);
+$userCounts = ['active' => 0, 'pending' => 0, 'blocked' => 0, 'deleted' => 0, 'admin' => 0, 'user' => 0];
+foreach ($users as $user) {
+    $status = strtolower($user['status'] ?? 'pending');
+    if (isset($userCounts[$status])) {
+        $userCounts[$status]++;
+    }
+    $role = strtolower($user['role'] ?? 'user');
+    if (isset($userCounts[$role])) {
+        $userCounts[$role]++;
+    }
+}
+$showingCount = count($users);
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -35,27 +81,12 @@
     .nav-item.active .nav-icon{color:var(--accent);}
     .nav-icon{font-size:1rem;width:18px;text-align:center;color:#9ca3af;}
     .sidebar-spacer{flex:1;}
-    .sidebar-footer{padding:14px 16px;border-top:1px solid var(--sidebar-border);display:flex;flex-direction:column;gap:8px;}
-    .btn-insights{width:100%;background:#f3f4f6;border:1px solid var(--border);border-radius:9px;padding:9px;font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:600;color:var(--text-mid);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;}
-    .btn-new-report{width:100%;background:var(--accent);color:#fff;border:none;border-radius:9px;padding:10px;font-family:'Sora',sans-serif;font-weight:700;font-size:.83rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 4px 12px rgba(79,70,229,.3);transition:opacity .2s;}
-    .btn-new-report:hover{opacity:.9;}
+    .sidebar-footer{padding:14px 16px;border-top:1px solid var(--sidebar-border);}
+    .btn-logout{width:100%;background:var(--yellow);color:#7a5c00;border:none;border-radius:9px;padding:10px;font-family:'Sora',sans-serif;font-weight:700;font-size:.83rem;cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px;transition:opacity .2s;}
+    .btn-logout:hover{opacity:.9;}
 
     /* MAIN */
     .main{margin-left:220px;flex:1;display:flex;flex-direction:column;}
-
-    /* TOPNAV */
-    .topnav{background:var(--white);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
-    .topnav-search{display:flex;align-items:center;gap:8px;background:#f3f4f6;border:1px solid var(--border);border-radius:8px;padding:8px 14px;min-width:280px;}
-    .topnav-search input{background:transparent;border:none;outline:none;font-family:'DM Sans',sans-serif;font-size:.85rem;color:var(--text-mid);width:100%;}
-    .topnav-search input::placeholder{color:var(--text-light);}
-    .topnav-right{display:flex;align-items:center;gap:12px;}
-    .notif-btn{width:34px;height:34px;border-radius:50%;background:#f3f4f6;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:.95rem;position:relative;}
-    .notif-dot{position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:var(--red);border:2px solid #fff;}
-    .profile-btn{display:flex;align-items:center;gap:8px;cursor:pointer;padding:5px 12px 5px 5px;background:#f3f4f6;border:1px solid var(--border);border-radius:50px;transition:background .15s;}
-    .profile-btn:hover{background:#ebebeb;}
-    .profile-ava{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#818cf8);display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;color:#fff;}
-    .profile-btn span{font-size:.82rem;font-weight:600;color:var(--text-mid);}
-    .profile-btn .chevron{color:var(--text-light);font-size:.7rem;}
 
     /* CONTENT */
     .content{padding:26px 28px;}
@@ -74,39 +105,20 @@
     .btn-add-user{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:10px 18px;font-family:'Sora',sans-serif;font-weight:700;font-size:.83rem;cursor:pointer;display:flex;align-items:center;gap:7px;box-shadow:0 4px 12px rgba(79,70,229,.3);transition:opacity .2s;}
     .btn-add-user:hover{opacity:.9;}
 
-    /* ROLE MANAGEMENT */
-    .role-section{background:var(--white);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow);margin-bottom:22px;}
-    .role-section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
-    .role-section-header div h3{font-size:.95rem;font-weight:700;}
-    .role-section-header div p{font-size:.78rem;color:var(--text-muted);margin-top:2px;}
-    .view-tabs{display:flex;gap:4px;background:#f3f4f6;border-radius:8px;padding:3px;}
-    .vtab{padding:5px 12px;border-radius:6px;font-size:.77rem;font-weight:600;cursor:pointer;color:var(--text-muted);border:none;background:transparent;transition:all .15s;}
-    .vtab.active{background:var(--white);color:var(--accent);box-shadow:0 1px 4px rgba(0,0,0,.08);}
-    .role-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
-    .role-card{border:1px solid var(--border);border-radius:10px;padding:18px;}
-    .role-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
-    .role-card-icon{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;}
-    .ri-purple{background:#f5f3ff;}
-    .ri-blue{background:#eff6ff;}
-    .ri-gray{background:#f9fafb;}
-    .member-badge{font-size:.7rem;font-weight:700;padding:3px 10px;border-radius:50px;display:flex;align-items:center;gap:4px;}
-    .mb-purple{background:#ede9fe;color:var(--accent);}
-    .mb-blue{background:#dbeafe;color:#1e40af;}
-    .mb-gray{background:#f3f4f6;color:var(--text-muted);}
-    .role-card h4{font-size:.88rem;font-weight:700;margin-bottom:6px;}
-    .role-card p{font-size:.78rem;color:var(--text-muted);line-height:1.5;margin-bottom:12px;}
-    .config-link{font-size:.78rem;color:var(--accent);font-weight:600;text-decoration:none;cursor:pointer;}
-    .config-link:hover{text-decoration:underline;}
+    .admin-flash{background:#eef6ff;border:1px solid #dbeafe;color:#1e40af;border-radius:12px;padding:14px 18px;margin-bottom:18px;font-weight:600;}
+    .admin-flash.error{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
+    .form-card{background:var(--white);border:1px solid var(--border);border-radius:18px;padding:18px;margin-bottom:20px;box-shadow:var(--shadow);}
+    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;}
+    .form-field{display:flex;flex-direction:column;gap:6px;}
+    .form-field.full{grid-column:1/-1;}
+    .form-input{background:#f9fafb;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-family:'DM Sans',sans-serif;font-size:.86rem;color:var(--text-dark);outline:none;}
+    .form-input:focus{border-color:var(--accent);background:#fff;}
+    .form-actions{display:flex;gap:10px;align-items:center;margin-top:12px;}
+    .btn-submit{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-family:'Sora',sans-serif;font-weight:700;font-size:.85rem;cursor:pointer;}
+    .btn-secondary{background:#f3f4f6;color:var(--text-dark);border:none;border-radius:10px;padding:10px 16px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:.85rem;cursor:pointer;}
 
     /* USERS TABLE */
     .users-card{background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);}
-    .users-toolbar{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);}
-    .toolbar-left{display:flex;gap:8px;}
-    .btn-toolbar{display:flex;align-items:center;gap:6px;background:#f3f4f6;border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-family:'DM Sans',sans-serif;font-size:.82rem;font-weight:600;color:var(--text-mid);cursor:pointer;transition:background .15s;}
-    .btn-toolbar:hover{background:#ebebeb;}
-    .showing-label{font-size:.82rem;color:var(--text-muted);}
-    .showing-label strong{color:var(--text-dark);}
-
     /* TABLE */
     table{width:100%;border-collapse:collapse;}
     thead th{font-size:.67rem;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;padding:10px 20px;text-align:left;background:#fafafa;border-bottom:1px solid var(--border);}
@@ -146,15 +158,6 @@
     .btn-approve{background:var(--teal);color:#fff;border:none;border-radius:7px;padding:5px 12px;font-family:'DM Sans',sans-serif;font-size:.77rem;font-weight:700;cursor:pointer;transition:opacity .2s;}
     .btn-approve:hover{opacity:.85;}
 
-    /* PAGINATION */
-    .pagination{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-top:1px solid var(--border);}
-    .page-btns{display:flex;gap:4px;}
-    .page-btn{width:30px;height:30px;border-radius:7px;border:1px solid var(--border);background:var(--white);display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:600;color:var(--text-mid);cursor:pointer;transition:all .15s;}
-    .page-btn:hover{background:#f3f4f6;}
-    .page-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;}
-    .page-btn.arrow{color:var(--text-light);}
-    .rows-per-page{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--text-muted);}
-    .rows-select{background:#f3f4f6;border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-family:'DM Sans',sans-serif;font-size:.8rem;color:var(--text-mid);outline:none;}
   </style>
 </head>
 <body>
@@ -171,42 +174,27 @@
     </div>
   </div>
   <nav class="sidebar-nav">
-    <a class="nav-item" href="#"><span class="nav-icon">📊</span> Dashboard</a>
-    <a class="nav-item active" href="#"><span class="nav-icon">👥</span> Users</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🎯</span> Budgets</a>
-    <a class="nav-item" href="#"><span class="nav-icon">💳</span> Transactions</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🗂️</span> Categories</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🔔</span> Alerts</a>
-    <a class="nav-item" href="#"><span class="nav-icon">⚙️</span> Settings</a>
+    <a class="nav-item" href="dashboard.php"><span class="nav-icon">📊</span> Dashboard</a>
+    <a class="nav-item active" href="users.php"><span class="nav-icon">👥</span> Users</a>
+    <a class="nav-item" href="budgets.php"><span class="nav-icon">🎯</span> Budgets</a>
+    <a class="nav-item" href="transactions.php"><span class="nav-icon">💳</span> Transactions</a>
+    <a class="nav-item" href="categories.php"><span class="nav-icon">🗂️</span> Categories</a>
+    <a class="nav-item" href="alerts.php"><span class="nav-icon">🔔</span> Alerts</a>
+    <a class="nav-item" href="export_data.php"><span class="nav-icon">⬇️</span> Export Data</a>
+    <a class="nav-item" href="profile.php"><span class="nav-icon">⚙️</span> Settings</a>
   </nav>
   <div class="sidebar-spacer"></div>
   <div class="sidebar-footer">
-    <button class="btn-insights">✦ Generate Insights</button>
-    <button class="btn-new-report">New Report</button>
+    <a class="btn-logout" href="/pocket_money/views/logout.php">Logout</a>
   </div>
 </aside>
 
 <!-- MAIN -->
 <div class="main">
-  <div class="topnav">
-    <div class="topnav-search">
-      <span style="color:#9ca3af;font-size:.85rem">🔍</span>
-      <input type="text" placeholder="Search users, roles, or permissions..."/>
-    </div>
-    <div class="topnav-right">
-      <div class="notif-btn">🔔<div class="notif-dot"></div></div>
-      <div class="profile-btn">
-        <div class="profile-ava">AR</div>
-        <span>Alex Rivera</span>
-        <span class="chevron">▾</span>
-      </div>
-    </div>
-  </div>
-
   <div class="content">
     <!-- BREADCRUMB -->
     <div class="breadcrumb">
-      <a href="#">Management</a>
+      <span>Management</span>
       <span class="sep">/</span>
       <span class="active-crumb">User Management</span>
     </div>
@@ -217,66 +205,95 @@
         <h1>User Management</h1>
         <p>Manage organizational access, roles, and security permissions.</p>
       </div>
-      <button class="btn-add-user">👤 Add New User</button>
+      <a class="btn-add-user" href="#new-user-form">👤 Add New User</a>
+    </div>
+    <div class="form-card" style="margin-bottom:20px;">
+      <form method="get" action="users.php">
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="user-search">Search users</label>
+            <input class="form-input" id="user-search" name="search" type="text" value="<?= htmlspecialchars($search, ENT_QUOTES, 'UTF-8') ?>" placeholder="Search by name, email, role or status" />
+          </div>
+          <div class="form-field">
+            <label for="filter-status">Status</label>
+            <select class="form-input" id="filter-status" name="filterStatus">
+              <option value="">All statuses</option>
+              <option value="active" <?= $filterStatus === 'active' ? 'selected' : '' ?>>Active</option>
+              <option value="pending" <?= $filterStatus === 'pending' ? 'selected' : '' ?>>Pending</option>
+              <option value="blocked" <?= $filterStatus === 'blocked' ? 'selected' : '' ?>>Blocked</option>
+              <option value="deleted" <?= $filterStatus === 'deleted' ? 'selected' : '' ?>>Deleted</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="filter-role">Role</label>
+            <select class="form-input" id="filter-role" name="filterRole">
+              <option value="">All roles</option>
+              <option value="admin" <?= $filterRole === 'admin' ? 'selected' : '' ?>>Admin</option>
+              <option value="user" <?= $filterRole === 'user' ? 'selected' : '' ?>>User</option>
+            </select>
+          </div>
+          <div class="form-field full" style="display:flex;align-items:flex-end;gap:10px;">
+            <button type="submit" class="btn-submit">Apply filters</button>
+            <a class="btn-secondary" href="users.php">Reset</a>
+          </div>
+        </div>
+      </form>
     </div>
 
-    <!-- ROLE MANAGEMENT -->
-    <div class="role-section">
-      <div class="role-section-header">
-        <div>
-          <h3>Role Management</h3>
-          <p>Configure permission groups for your financial ecosystem.</p>
-        </div>
-        <div class="view-tabs">
-          <button class="vtab active">Global View</button>
-          <button class="vtab">Admin Only</button>
-          <button class="vtab">Restricted</button>
-        </div>
-      </div>
-      <div class="role-cards">
-        <!-- Full Administrators -->
-        <div class="role-card">
-          <div class="role-card-header">
-            <div class="role-card-icon ri-purple">🛡️</div>
-            <div class="member-badge mb-purple">4 Members</div>
+    <?php if ($adminFlash): ?>
+      <div class="admin-flash <?= $adminFlash['success'] ? '' : 'error' ?>"><?= htmlspecialchars($adminFlash['message'], ENT_QUOTES, 'UTF-8') ?></div>
+    <?php endif; ?>
+
+    <div id="new-user-form" class="form-card">
+      <h3><?= $editUser ? 'Edit User' : 'Create New User' ?></h3>
+      <form method="post" action="admin_actions.php?resource=user&action=<?= $editUser ? 'update' : 'create' ?>">
+        <?php if ($editUser): ?>
+          <input type="hidden" name="id" value="<?= htmlspecialchars($editUser['id'], ENT_QUOTES, 'UTF-8') ?>"/>
+        <?php endif; ?>
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="name">First Name</label>
+            <input class="form-input" id="name" name="name" type="text" value="<?= htmlspecialchars($editUser['name'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required/>
           </div>
-          <h4>Full Administrators</h4>
-          <p>Unrestricted access to all budgets, user management, and global settings.</p>
-          <a class="config-link">Configure Permissions →</a>
-        </div>
-        <!-- Budget Managers -->
-        <div class="role-card">
-          <div class="role-card-header">
-            <div class="role-card-icon ri-blue">🏛️</div>
-            <div class="member-badge mb-blue">10 Members</div>
+          <div class="form-field">
+            <label for="lastName">Last Name</label>
+            <input class="form-input" id="lastName" name="lastName" type="text" value="<?= htmlspecialchars($editUser['lastName'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required/>
           </div>
-          <h4>Budget Managers</h4>
-          <p>Can create, edit and approve transactions for specific assigned departments.</p>
-          <a class="config-link">Configure Permissions →</a>
-        </div>
-        <!-- Auditors -->
-        <div class="role-card">
-          <div class="role-card-header">
-            <div class="role-card-icon ri-gray">👁️</div>
-            <div class="member-badge mb-gray">38 Members</div>
+          <div class="form-field">
+            <label for="email">Email</label>
+            <input class="form-input" id="email" name="email" type="email" value="<?= htmlspecialchars($editUser['email'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required/>
           </div>
-          <h4>Auditors</h4>
-          <p>Read-only access to transaction history and generated financial reports.</p>
-          <a class="config-link">Configure Permissions →</a>
+          <div class="form-field">
+            <label for="role">Role</label>
+            <select class="form-input" id="role" name="role">
+              <option value="user" <?= isset($editUser['role']) && strtolower($editUser['role']) === 'user' ? 'selected' : '' ?>>User</option>
+              <option value="admin" <?= isset($editUser['role']) && strtolower($editUser['role']) === 'admin' ? 'selected' : '' ?>>Admin</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="status">Status</label>
+            <select class="form-input" id="status" name="status">
+              <option value="active" <?= isset($editUser['status']) && strtolower($editUser['status']) === 'active' ? 'selected' : '' ?>>Active</option>
+              <option value="pending" <?= isset($editUser['status']) && strtolower($editUser['status']) === 'pending' ? 'selected' : '' ?>>Pending</option>
+              <option value="blocked" <?= isset($editUser['status']) && strtolower($editUser['status']) === 'blocked' ? 'selected' : '' ?>>Blocked</option>
+            </select>
+          </div>
+          <div class="form-field full">
+            <label for="password"><?= $editUser ? 'New Password (leave blank to keep current)' : 'Password' ?></label>
+            <input class="form-input" id="password" name="password" type="password" <?= $editUser ? '' : 'required' ?>/>
+          </div>
         </div>
-      </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-submit"><?= $editUser ? 'Save Changes' : 'Create User' ?></button>
+          <?php if ($editUser): ?>
+            <a href="users.php" class="btn-secondary">Cancel</a>
+          <?php endif; ?>
+        </div>
+      </form>
     </div>
 
     <!-- USERS TABLE -->
     <div class="users-card">
-      <div class="users-toolbar">
-        <div class="toolbar-left">
-          <button class="btn-toolbar">⚙ Filter</button>
-          <button class="btn-toolbar">↑ Export</button>
-        </div>
-        <div class="showing-label">Showing <strong>54 Users</strong></div>
-      </div>
-
       <table>
         <thead>
           <tr>
@@ -288,127 +305,42 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Sarah Chen -->
-          <tr>
-            <td>
-              <div class="user-cell">
-                <div class="user-ava-img" style="background:linear-gradient(135deg,#4f46e5,#818cf8)">SC</div>
-                <div>
-                  <div class="user-name">Sarah Chen</div>
-                  <div class="user-email">sarah.c@budgetpro.com</div>
+          <?php foreach ($users as $user):
+              $badge = statusBadge($user['status'] ?? 'pending');
+              $name = trim($user['name'] . ' ' . $user['lastName']);
+              $role = strtoupper($user['role'] ?? 'USER');
+              $initials = initials($user['name'], $user['lastName']);
+          ?>
+            <tr>
+              <td>
+                <div class="user-cell">
+                  <div class="user-ava-img" style="background:linear-gradient(135deg,<?= htmlspecialchars(categoryStyle(array_search(strtolower($role), ['admin','user']) ?: 0), ENT_QUOTES, 'UTF-8') ?>, #818cf8)"><?= htmlspecialchars($initials, ENT_QUOTES, 'UTF-8') ?></div>
+                  <div>
+                    <div class="user-name"><?= htmlspecialchars($name, ENT_QUOTES, 'UTF-8') ?></div>
+                    <div class="user-email"><?= htmlspecialchars($user['email'], ENT_QUOTES, 'UTF-8') ?></div>
+                  </div>
                 </div>
-              </div>
-            </td>
-            <td><span class="role-badge rb-admin">ADMIN</span></td>
-            <td><span class="status-badge sb-active"><span class="status-dot dot-teal"></span>Active</span></td>
-            <td class="td-activity">2 mins ago</td>
-            <td>
-              <div class="actions-cell">
-                <div class="action-btn">👁</div>
-                <div class="action-btn">✏️</div>
-                <div class="action-btn danger">🗑</div>
-              </div>
-            </td>
-          </tr>
-          <!-- Marcus Kinsley -->
-          <tr>
-            <td>
-              <div class="user-cell">
-                <div class="user-ava-img" style="background:linear-gradient(135deg,#059669,#34d399)">MK</div>
-                <div>
-                  <div class="user-name">Marcus Kinsley</div>
-                  <div class="user-email">m.kinsley@partner.co</div>
+              </td>
+              <td><span class="role-badge <?= roleBadgeClass($user['role'] ?? 'user') ?>"><?= htmlspecialchars($role, ENT_QUOTES, 'UTF-8') ?></span></td>
+              <td><span class="status-badge <?= htmlspecialchars($badge['class'], ENT_QUOTES, 'UTF-8') ?>"><span class="status-dot <?= $badge['class'] === 'sb-active' ? 'dot-teal' : ($badge['class'] === 'sb-pending' ? 'dot-yellow' : 'dot-red') ?>"></span><?= htmlspecialchars($badge['label'], ENT_QUOTES, 'UTF-8') ?></span></td>
+              <td class="td-activity"><?= htmlspecialchars(relativeTime($user['updatedAt'] ?? $user['createdAt']), ENT_QUOTES, 'UTF-8') ?></td>
+              <td>
+                <div class="actions-cell">
+                  <a class="action-btn" href="?editUser=<?= urlencode($user['id']) ?>">✏️</a>
+                  <form method="post" action="admin_actions.php?resource=user&action=delete" style="display:inline-block; margin:0;">
+                    <input type="hidden" name="id" value="<?= htmlspecialchars($user['id'], ENT_QUOTES, 'UTF-8') ?>"/>
+                    <button type="submit" class="action-btn danger" style="border:none;background:transparent;padding:0;">🗑</button>
+                  </form>
                 </div>
-              </div>
-            </td>
-            <td><span class="role-badge rb-user">USER</span></td>
-            <td><span class="status-badge sb-pending"><span class="status-dot dot-yellow"></span>Pending</span></td>
-            <td class="td-activity">Invited 4h ago</td>
-            <td>
-              <div class="actions-cell">
-                <button class="btn-approve">Approve</button>
-                <div class="action-btn danger">🗑</div>
-              </div>
-            </td>
-          </tr>
-          <!-- David Miller -->
-          <tr>
-            <td>
-              <div class="user-cell">
-                <div class="user-ava-img" style="background:linear-gradient(135deg,#ef4444,#f87171)">DM</div>
-                <div>
-                  <div class="user-name">David Miller</div>
-                  <div class="user-email">david.miller@corp.com</div>
-                </div>
-              </div>
-            </td>
-            <td><span class="role-badge rb-user">USER</span></td>
-            <td><span class="status-badge sb-blocked"><span class="status-dot dot-red"></span>Blocked</span></td>
-            <td class="td-activity">2 days ago</td>
-            <td>
-              <div class="actions-cell">
-                <div class="action-btn">👁</div>
-                <div class="action-btn">✏️</div>
-                <div class="action-btn danger">🗑</div>
-              </div>
-            </td>
-          </tr>
-          <!-- Elena Rodriguez -->
-          <tr>
-            <td>
-              <div class="user-cell">
-                <div class="user-ava-img" style="background:linear-gradient(135deg,#f59e0b,#fcd34d)">ER</div>
-                <div>
-                  <div class="user-name">Elena Rodriguez</div>
-                  <div class="user-email">e.rodriguez@budgetpro.com</div>
-                </div>
-              </div>
-            </td>
-            <td><span class="role-badge rb-admin">ADMIN</span></td>
-            <td><span class="status-badge sb-active"><span class="status-dot dot-teal"></span>Active</span></td>
-            <td class="td-activity">Now</td>
-            <td>
-              <div class="actions-cell">
-                <div class="action-btn">👁</div>
-                <div class="action-btn">✏️</div>
-                <div class="action-btn danger">🗑</div>
-              </div>
-            </td>
-          </tr>
+              </td>
+            </tr>
+          <?php endforeach; ?>
         </tbody>
       </table>
 
-      <!-- PAGINATION -->
-      <div class="pagination">
-        <div class="page-btns">
-          <button class="page-btn arrow">‹</button>
-          <button class="page-btn active">1</button>
-          <button class="page-btn">2</button>
-          <button class="page-btn">3</button>
-          <button class="page-btn">…</button>
-          <button class="page-btn arrow">›</button>
-        </div>
-        <div class="rows-per-page">
-          Rows per page
-          <select class="rows-select">
-            <option>20</option>
-            <option>50</option>
-            <option>100</option>
-          </select>
-        </div>
-      </div>
     </div>
   </div>
 </div>
 
-<script>
-  // View tab toggle
-  document.querySelectorAll('.vtab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.vtab').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    });
-  });
-</script>
 </body>
 </html>

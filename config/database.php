@@ -12,7 +12,6 @@ try{
 
     );
 
-    echo "lucky you  ";
     }catch(PDOException $e){
         die("Erreur : ". $e->getMessage());
         

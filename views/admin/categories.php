@@ -1,3 +1,45 @@
+<?php
+require_once __DIR__ . '/admin_helpers.php';
+
+$adminFlash = getAdminFlash();
+$editCategory = null;
+if (!empty($_GET['editCategory'])) {
+    $stmt = $pdo->prepare('SELECT * FROM category WHERE idCategory = ? LIMIT 1');
+    $stmt->execute([$_GET['editCategory']]);
+    $editCategory = $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+$search = trim($_GET['search'] ?? '');
+$filterType = strtolower(trim($_GET['filterType'] ?? ''));
+$whereClauses = [];
+$queryParams = [];
+if ($search !== '') {
+    $whereClauses[] = 'c.name LIKE ?';
+    $queryParams[] = "%{$search}%";
+}
+if (in_array($filterType, ['expense', 'income'], true)) {
+    $whereClauses[] = 'LOWER(c.type) = ?';
+    $queryParams[] = $filterType;
+}
+$sql = "SELECT c.*, COUNT(t.idTransaction) AS transactionCount, COALESCE(SUM(CASE WHEN t.transCategory='EXPENSE' THEN t.amout ELSE 0 END),0) AS spent, COALESCE(SUM(CASE WHEN t.transCategory='INCOME' THEN t.amout ELSE 0 END),0) AS income FROM category c LEFT JOIN transaction t ON t.categoryId=c.idCategory";
+if ($whereClauses) {
+    $sql .= ' WHERE ' . implode(' AND ', $whereClauses);
+}
+$sql .= ' GROUP BY c.idCategory ORDER BY spent DESC';
+$categoryStmt = $pdo->prepare($sql);
+$categoryStmt->execute($queryParams);
+$categories = $categoryStmt->fetchAll(PDO::FETCH_ASSOC);
+$totalCategories = count($categories);
+$monthSpendStmt = $pdo->prepare(
+    "SELECT COALESCE(SUM(amout),0) FROM transaction WHERE transCategory='EXPENSE' AND YEAR(date)=YEAR(CURDATE()) AND MONTH(date)=MONTH(CURDATE())"
+);
+$monthSpendStmt->execute();
+$totalMonthSpend = (float) $monthSpendStmt->fetchColumn();
+$mostUsedCategory = $categories[0]['name'] ?? 'None';
+$mostUsedTransactions = $categories[0]['transactionCount'] ?? 0;
+$topCategories = array_slice($categories, 0, 5);
+$topCategorySpent = max(array_column($topCategories, 'spent') ?: [1]);
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -24,18 +66,9 @@
     .nav-icon{font-size:.9rem;width:17px;text-align:center;color:#9ca3af;}
     .sidebar-spacer{flex:1;}
     .sidebar-footer{padding:12px 14px;border-top:1px solid var(--border);}
-    .btn-new-report{width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-family:'Sora',sans-serif;font-weight:700;font-size:.8rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;}
+    .btn-logout{width:100%;background:var(--yellow);color:#7a5c00;border:none;border-radius:8px;padding:9px;font-family:'Sora',sans-serif;font-weight:700;font-size:.8rem;cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:5px;}
+    .btn-logout:hover{opacity:.9;}
     .main{margin-left:200px;flex:1;display:flex;flex-direction:column;}
-    .topnav{background:var(--white);border-bottom:1px solid var(--border);padding:11px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
-    .topnav-search{display:flex;align-items:center;gap:7px;background:#f3f4f6;border:1px solid var(--border);border-radius:8px;padding:7px 12px;min-width:240px;}
-    .topnav-search input{background:transparent;border:none;outline:none;font-family:'DM Sans',sans-serif;font-size:.83rem;color:var(--text-mid);width:100%;}
-    .topnav-search input::placeholder{color:var(--text-light);}
-    .topnav-right{display:flex;align-items:center;gap:10px;}
-    .notif-btn{width:32px;height:32px;border-radius:50%;background:#f3f4f6;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;}
-    .notif-dot{position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;background:var(--red);border:2px solid #fff;}
-    .profile-btn{display:flex;align-items:center;gap:7px;cursor:pointer;padding:5px 10px 5px 5px;background:#f3f4f6;border:1px solid var(--border);border-radius:50px;}
-    .profile-ava{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#818cf8);display:flex;align-items:center;justify-content:center;font-size:.62rem;font-weight:700;color:#fff;}
-    .profile-btn span{font-size:.8rem;font-weight:600;color:var(--text-mid);}
     .content{padding:22px 24px;}
     .page-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;}
     .page-header h1{font-size:1.4rem;font-weight:800;}
@@ -44,6 +77,19 @@
     .btn-export{display:flex;align-items:center;gap:5px;background:var(--white);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:600;color:var(--text-mid);cursor:pointer;}
     .btn-export:hover{background:#f3f4f6;}
     .btn-add{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-family:'Sora',sans-serif;font-weight:700;font-size:.8rem;cursor:pointer;display:flex;align-items:center;gap:5px;box-shadow:0 4px 12px rgba(79,70,229,.3);}
+    .action-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:#f3f4f6;color:var(--text-mid);border:1px solid var(--border);font-size:.82rem;cursor:pointer;text-decoration:none;margin-right:6px;}
+    .action-btn:hover{background:#eef2ff;color:var(--accent);}
+    .admin-flash{background:#eef6ff;border:1px solid #dbeafe;color:#1e40af;border-radius:12px;padding:14px 18px;margin-bottom:18px;font-weight:600;}
+    .admin-flash.error{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
+    .form-card{background:var(--white);border:1px solid var(--border);border-radius:18px;padding:18px;margin-bottom:20px;box-shadow:var(--shadow);}
+    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;}
+    .form-field{display:flex;flex-direction:column;gap:6px;}
+    .form-field.full{grid-column:1/-1;}
+    .form-input{background:#f9fafb;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-family:'DM Sans',sans-serif;font-size:.86rem;color:var(--text-dark);outline:none;}
+    .form-input:focus{border-color:var(--accent);background:#fff;}
+    .form-actions{display:flex;justify-content:flex-end;gap:10px;align-items:center;margin-top:14px;}
+    .btn-submit{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-family:'Sora',sans-serif;font-weight:700;font-size:.85rem;cursor:pointer;}
+    .btn-secondary{background:#f3f4f6;color:var(--text-dark);border:none;border-radius:10px;padding:10px 16px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:.85rem;cursor:pointer;}
     /* STAT STRIP */
     .stat-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:0;background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:20px;overflow:hidden;}
     .ss-item{padding:16px 20px;border-right:1px solid var(--border);}
@@ -78,14 +124,14 @@
     .spend-total{font-weight:700;color:var(--text-dark);}
     .prog-bg{background:#f3f4f6;border-radius:50px;height:5px;}
     .prog-fill{height:5px;border-radius:50px;}
-    /* Add card */
-    .add-cat-card{background:var(--white);border:2px dashed var(--border);border-radius:var(--radius);display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:220px;cursor:pointer;transition:all .2s;gap:8px;text-align:center;padding:20px;}
-    .add-cat-card:hover{border-color:var(--accent);background:var(--accent-soft);}
-    .add-plus{width:36px;height:36px;border-radius:10px;background:#f3f4f6;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1.2rem;color:var(--text-muted);}
-    .add-cat-card:hover .add-plus{background:var(--accent-soft);border-color:#c7d2fe;color:var(--accent);}
-    .add-cat-card h4{font-size:.85rem;font-weight:700;color:var(--text-muted);}
-    .add-cat-card:hover h4{color:var(--accent);}
-    .add-cat-card p{font-size:.72rem;color:var(--text-light);}
+    .table-wrapper{overflow-x:auto;}
+    .manage-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:.9rem;color:var(--text-mid);}
+    .manage-table th,.manage-table td{padding:14px 16px;border-bottom:1px solid var(--border);}
+    .manage-table th{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);}
+    .manage-table tr:hover{background:#f9fafb;}
+    .manage-table td:last-child{white-space:nowrap;}
+    .action-btn.danger{border:1px solid #fee2e2;background:var(--red-soft);color:var(--red);}
+    .action-btn.danger:hover{background:#fecaca;}
   </style>
 </head>
 <body>
@@ -97,114 +143,152 @@
     </div>
   </div>
   <nav class="sidebar-nav">
-    <a class="nav-item" href="#"><span class="nav-icon">📊</span> Dashboard</a>
-    <a class="nav-item" href="#"><span class="nav-icon">👥</span> Users</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🎯</span> Budgets</a>
-    <a class="nav-item" href="#"><span class="nav-icon">💳</span> Transactions</a>
-    <a class="nav-item active" href="#"><span class="nav-icon">🗂️</span> Categories</a>
-    <a class="nav-item" href="#"><span class="nav-icon">🔔</span> Alerts</a>
-    <a class="nav-item" href="#"><span class="nav-icon">⚙️</span> Settings</a>
+    <a class="nav-item" href="dashboard.php"><span class="nav-icon">📊</span> Dashboard</a>
+    <a class="nav-item" href="users.php"><span class="nav-icon">👥</span> Users</a>
+    <a class="nav-item" href="budgets.php"><span class="nav-icon">🎯</span> Budgets</a>
+    <a class="nav-item" href="transactions.php"><span class="nav-icon">💳</span> Transactions</a>
+    <a class="nav-item active" href="categories.php"><span class="nav-icon">🗂️</span> Categories</a>
+    <a class="nav-item" href="alerts.php"><span class="nav-icon">🔔</span> Alerts</a>
+    <a class="nav-item" href="export_data.php"><span class="nav-icon">⬇️</span> Export Data</a>
+    <a class="nav-item" href="profile.php"><span class="nav-icon">⚙️</span> Settings</a>
   </nav>
   <div class="sidebar-spacer"></div>
   <div class="sidebar-footer">
-    <button class="btn-new-report">＋ New Report</button>
+    <a class="btn-logout" href="/pocket_money/views/logout.php">Logout</a>
   </div>
 </aside>
 <div class="main">
-  <div class="topnav">
-    <div class="topnav-search"><span style="color:#9ca3af">🔍</span><input type="text" placeholder="Search categories..."/></div>
-    <div class="topnav-right">
-      <div class="notif-btn">🔔<div class="notif-dot"></div></div>
-      <div class="profile-btn"><div class="profile-ava">AR</div><span>Alex Rivera</span><span style="color:var(--text-light);font-size:.7rem">▾</span></div>
-    </div>
-  </div>
   <div class="content">
     <div class="page-header">
       <div><h1>Expense Categories</h1><p>Organize and track your organizational spending habits.</p></div>
       <div class="header-btns">
-        <button class="btn-export">↑ Export</button>
-        <button class="btn-add">＋ Add Category</button>
+        <a class="btn-export" href="export_data.php?type=categories">↑ Export</a>
+        <a class="btn-add" href="#category-form">＋ Add Category</a>
       </div>
     </div>
+    <?php if ($adminFlash): ?>
+      <div class="admin-flash <?= $adminFlash['success'] ? '' : 'error' ?>"><?= htmlspecialchars($adminFlash['message'], ENT_QUOTES, 'UTF-8') ?></div>
+    <?php endif; ?>
+
+    <div class="form-card" style="margin-bottom:20px;">
+      <form method="get" action="categories.php">
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="category-search">Search categories</label>
+            <input class="form-input" id="category-search" name="search" type="text" value="<?= htmlspecialchars($search, ENT_QUOTES, 'UTF-8') ?>" placeholder="Search by category name" />
+          </div>
+          <div class="form-field">
+            <label for="filter-type">Type</label>
+            <select class="form-input" id="filter-type" name="filterType">
+              <option value="">All types</option>
+              <option value="expense" <?= $filterType === 'expense' ? 'selected' : '' ?>>Expense</option>
+              <option value="income" <?= $filterType === 'income' ? 'selected' : '' ?>>Income</option>
+            </select>
+          </div>
+          <div class="form-field full" style="display:flex;align-items:flex-end;gap:10px;">
+            <button type="submit" class="btn-submit">Apply filters</button>
+            <a class="btn-secondary" href="categories.php">Reset</a>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <div id="category-form" class="form-card">
+      <h3><?= $editCategory ? 'Edit Category' : 'Create New Category' ?></h3>
+      <form method="post" action="admin_actions.php?resource=category&action=<?= $editCategory ? 'update' : 'create' ?>">
+        <?php if ($editCategory): ?>
+          <input type="hidden" name="id" value="<?= htmlspecialchars($editCategory['idCategory'], ENT_QUOTES, 'UTF-8') ?>"/>
+        <?php endif; ?>
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="category-name">Name</label>
+            <input class="form-input" id="category-name" name="name" type="text" value="<?= htmlspecialchars($editCategory['name'] ?? '', ENT_QUOTES, 'UTF-8') ?>" required/>
+          </div>
+          <div class="form-field">
+            <label for="category-type">Type</label>
+            <select class="form-input" id="category-type" name="type">
+              <option value="expense" <?= isset($editCategory['type']) && strtolower($editCategory['type']) === 'expense' ? 'selected' : '' ?>>Expense</option>
+              <option value="income" <?= isset($editCategory['type']) && strtolower($editCategory['type']) === 'income' ? 'selected' : '' ?>>Income</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-submit"><?= $editCategory ? 'Update Category' : 'Create Category' ?></button>
+          <?php if ($editCategory): ?>
+            <a href="categories.php" class="btn-secondary">Cancel</a>
+          <?php endif; ?>
+        </div>
+      </form>
+    </div>
+
     <!-- STAT STRIP -->
     <div class="stat-strip">
       <div class="ss-item">
         <div class="ss-label">Total Categories</div>
-        <div class="ss-val">12</div>
+        <div class="ss-val"><?= htmlspecialchars($totalCategories, ENT_QUOTES, 'UTF-8') ?></div>
         <div class="ss-sub"><span style="display:inline-flex;align-items:center;gap:3px;font-size:.75rem;color:var(--teal)">📈 Active tracking</span></div>
       </div>
       <div class="ss-item most-used">
         <div class="ss-label">Most Used</div>
-        <div class="mu-value">Software <span style="font-size:.78rem;font-weight:500;color:var(--text-muted)">42 Transactions</span></div>
+        <div class="mu-value"><?= htmlspecialchars($mostUsedCategory, ENT_QUOTES, 'UTF-8') ?> <span style="font-size:.78rem;font-weight:500;color:var(--text-muted)"><?= htmlspecialchars($mostUsedTransactions, ENT_QUOTES, 'UTF-8') ?> Tx</span></div>
       </div>
       <div class="ss-item">
         <div class="ss-label">Total Month Spend</div>
-        <div class="ss-val">$24,402</div>
-        <div class="ss-sub"><span class="ss-badge sb-red">↑ -10%</span></div>
+        <div class="ss-val"><?= htmlspecialchars(formatCurrency($totalMonthSpend), ENT_QUOTES, 'UTF-8') ?></div>
+        <div class="ss-sub"><span class="ss-badge sb-red">Live</span></div>
       </div>
     </div>
     <!-- CAT GRID -->
     <div class="cat-grid">
-      <!-- Software -->
-      <div class="cat-card">
-        <div class="cat-top"><div class="cat-icon ci-blue">💻</div><button class="cat-menu">⋯</button></div>
-        <div class="cat-name">Software</div>
-        <div class="cat-desc">SaaS, Cloud & Subscriptions</div>
-        <div class="cat-stats">
-          <div class="cs-item"><div class="cs-num">08</div><div class="cs-label">Active</div></div>
-          <div class="cs-item"><div class="cs-num cs-spend" style="color:var(--red)">$12,452</div><div class="cs-label">Spent Total</div></div>
+      <?php foreach ($topCategories as $index => $category):
+        $color = categoryStyle($index);
+        $label = htmlspecialchars($category['name'], ENT_QUOTES, 'UTF-8');
+        $spent = (float) $category['spent'];
+        $transactions = (int) $category['transactionCount'];
+        $progress = $topCategorySpent > 0 ? min(100, (int) round(($spent / $topCategorySpent) * 100)) : 0;
+      ?>
+        <div class="cat-card">
+          <div class="cat-top"><div class="cat-icon" style="background:<?= htmlspecialchars($color . '33', ENT_QUOTES, 'UTF-8') ?>;color:<?= htmlspecialchars($color, ENT_QUOTES, 'UTF-8') ?>;">📌</div><button class="cat-menu">⋯</button></div>
+          <div class="cat-name"><?= $label ?></div>
+          <div class="cat-desc"><?= htmlspecialchars($category['type'] ?? 'Expense', ENT_QUOTES, 'UTF-8') ?></div>
+          <div class="cat-stats">
+            <div class="cs-item"><div class="cs-num"><?= htmlspecialchars($transactions, ENT_QUOTES, 'UTF-8') ?></div><div class="cs-label">Transactions</div></div>
+            <div class="cs-item"><div class="cs-num" style="color:var(--red)"><?= htmlspecialchars(formatCurrency($spent), ENT_QUOTES, 'UTF-8') ?></div><div class="cs-label">Spent Total</div></div>
+          </div>
+          <div class="prog-bg"><div class="prog-fill" style="width:<?= $progress ?>%;background:<?= htmlspecialchars($color, ENT_QUOTES, 'UTF-8') ?>"></div></div>
         </div>
-        <div class="prog-bg"><div class="prog-fill" style="width:78%;background:var(--blue)"></div></div>
-      </div>
-      <!-- Travel -->
-      <div class="cat-card">
-        <div class="cat-top"><div class="cat-icon ci-yellow">✈️</div><button class="cat-menu">⋯</button></div>
-        <div class="cat-name">Travel</div>
-        <div class="cat-desc">Business Trips & Transport</div>
-        <div class="cat-stats">
-          <div class="cs-item"><div class="cs-num">04</div><div class="cs-label">Active</div></div>
-          <div class="cs-item"><div class="cs-num" style="color:var(--red)">$4,210</div><div class="cs-label">Spent Total</div></div>
-        </div>
-        <div class="prog-bg"><div class="prog-fill" style="width:55%;background:var(--yellow)"></div></div>
-      </div>
-      <!-- Rent -->
-      <div class="cat-card">
-        <div class="cat-top"><div class="cat-icon ci-purple">🏢</div><button class="cat-menu">⋯</button></div>
-        <div class="cat-name">Rent</div>
-        <div class="cat-desc">Office Leases & Utilities</div>
-        <div class="cat-stats">
-          <div class="cs-item"><div class="cs-num">01</div><div class="cs-label">Active</div></div>
-          <div class="cs-item"><div class="cs-num" style="color:var(--red)">$9,500</div><div class="cs-label">Spent Total</div></div>
-        </div>
-        <div class="prog-bg"><div class="prog-fill" style="width:90%;background:var(--purple)"></div></div>
-      </div>
-      <!-- Meals -->
-      <div class="cat-card">
-        <div class="cat-top"><div class="cat-icon ci-green">🍽️</div><button class="cat-menu">⋯</button></div>
-        <div class="cat-name">Meals</div>
-        <div class="cat-desc">Client Entertaining & Snacks</div>
-        <div class="cat-stats">
-          <div class="cs-item"><div class="cs-num">12</div><div class="cs-label">Active</div></div>
-          <div class="cs-item"><div class="cs-num" style="color:var(--red)">$1,241</div><div class="cs-label">Spent Total</div></div>
-        </div>
-        <div class="prog-bg"><div class="prog-fill" style="width:30%;background:var(--teal)"></div></div>
-      </div>
-      <!-- Marketing -->
-      <div class="cat-card">
-        <div class="cat-top"><div class="cat-icon ci-red">📣</div><button class="cat-menu">⋯</button></div>
-        <div class="cat-name">Marketing</div>
-        <div class="cat-desc">Ads & Brand Events</div>
-        <div class="cat-stats">
-          <div class="cs-item"><div class="cs-num">05</div><div class="cs-label">Active</div></div>
-          <div class="cs-item"><div class="cs-num" style="color:var(--red)">$8,900</div><div class="cs-label">Spent Total</div></div>
-        </div>
-        <div class="prog-bg"><div class="prog-fill" style="width:66%;background:var(--red)"></div></div>
-      </div>
-      <!-- Add new -->
-      <div class="add-cat-card">
-        <div class="add-plus">＋</div>
-        <h4>Create New Category</h4>
-        <p>Define custom spending rules</p>
+      <?php endforeach; ?>
+    </div>
+
+    <div class="form-card">
+      <h3>Manage Categories</h3>
+      <div class="table-wrapper">
+        <table class="manage-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Transactions</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($categories as $category): ?>
+              <tr>
+                <td><?= htmlspecialchars($category['name'], ENT_QUOTES, 'UTF-8') ?></td>
+                <td><?= htmlspecialchars(ucfirst($category['type'] ?? 'expense'), ENT_QUOTES, 'UTF-8') ?></td>
+                <td><?= htmlspecialchars($category['transactionCount'] ?? 0, ENT_QUOTES, 'UTF-8') ?></td>
+                <td>
+                  <a class="action-btn" href="?editCategory=<?= urlencode($category['idCategory']) ?>">✏️</a>
+                  <form method="post" action="admin_actions.php?resource=category&action=delete" style="display:inline-block;margin:0;">
+                    <input type="hidden" name="id" value="<?= htmlspecialchars($category['idCategory'], ENT_QUOTES, 'UTF-8') ?>"/>
+                    <button type="submit" class="action-btn danger">🗑</button>
+                  </form>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>

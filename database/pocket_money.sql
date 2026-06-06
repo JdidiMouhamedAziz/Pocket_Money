@@ -46,6 +46,7 @@ CREATE TABLE `alert` (
 
 CREATE TABLE `budget` (
   `idBudget` int(11) NOT NULL,
+  `name` varchar(255) DEFAULT NULL,
   `limit` float NOT NULL,
   `period` date NOT NULL,
   `startDate` date NOT NULL,
@@ -115,8 +116,28 @@ CREATE TABLE `group` (
 CREATE TABLE `groupmember` (
   `groupId` int(11) NOT NULL,
   `userId` int(11) NOT NULL,
-  `role` enum('admin','user') NOT NULL,
+  `role` enum('admin','user','owner','member') NOT NULL,
+  `status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
   `joinedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `grouprequest`
+--
+
+CREATE TABLE `grouprequest` (
+  `idRequest` int(11) NOT NULL,
+  `groupId` int(11) NOT NULL,
+  `userId` int(11) NOT NULL,
+  `type` enum('budget','spent') NOT NULL,
+  `amount` float NOT NULL,
+  `note` varchar(255) DEFAULT NULL,
+  `status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+  `requestedAt` timestamp NOT NULL DEFAULT current_timestamp(),
+  `reviewedAt` timestamp NULL DEFAULT NULL,
+  `reviewedBy` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -148,7 +169,7 @@ CREATE TABLE `users` (
   `name` varchar(100) NOT NULL,
   `lastName` varchar(100) NOT NULL,
   `email` varchar(100) NOT NULL,
-  `passowrd` varchar(100) NOT NULL,
+  `password` varchar(100) NOT NULL,
   `role` enum('user','admin') NOT NULL,
   `status` enum('pending','active','blocked','deleted') DEFAULT NULL,
   `createdAt` timestamp NOT NULL DEFAULT current_timestamp(),
@@ -210,6 +231,15 @@ ALTER TABLE `groupmember`
   ADD KEY `userId` (`userId`);
 
 --
+-- Index pour la table `grouprequest`
+--
+ALTER TABLE `grouprequest`
+  ADD PRIMARY KEY (`idRequest`),
+  ADD KEY `groupId` (`groupId`),
+  ADD KEY `userId` (`userId`),
+  ADD KEY `status` (`status`);
+
+--
 -- Index pour la table `transaction`
 --
 ALTER TABLE `transaction`
@@ -265,6 +295,12 @@ ALTER TABLE `users`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT pour la table `grouprequest`
+--
+ALTER TABLE `grouprequest`
+  MODIFY `idRequest` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- Contraintes pour les tables déchargées
 --
 
@@ -306,6 +342,14 @@ ALTER TABLE `group`
 ALTER TABLE `groupmember`
   ADD CONSTRAINT `groupmember_ibfk_1` FOREIGN KEY (`groupId`) REFERENCES `group` (`idGroup`) ON DELETE CASCADE ON UPDATE CASCADE,
   ADD CONSTRAINT `groupmember_ibfk_2` FOREIGN KEY (`userId`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Contraintes pour la table `grouprequest`
+--
+ALTER TABLE `grouprequest`
+  ADD CONSTRAINT `grouprequest_ibfk_1` FOREIGN KEY (`groupId`) REFERENCES `group` (`idGroup`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `grouprequest_ibfk_2` FOREIGN KEY (`userId`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `grouprequest_ibfk_3` FOREIGN KEY (`reviewedBy`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 --
 -- Contraintes pour la table `transaction`

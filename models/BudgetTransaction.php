@@ -8,13 +8,13 @@
 
         //creete budgetTransaction
         public function createBudgettransaction($budgetId,$transactionId){
-            $stmt = $this->pdo->prepare("INSERT INTO budgettransaction VALUES(?,?)");
+            $stmt = $this->pdo->prepare("INSERT INTO budgettransaction (budgetId, transactionId) VALUES (?, ?)");
             return $stmt->execute([$budgetId,$transactionId]);
         }
 
         //findTransactionn by budget id
         public function findTransactionByBudgetId( $budgetId ){
-            $stmt = $this->pdo->prepare("SELECT FROM budgettransaction WHERE budgetId=?");
+            $stmt = $this->pdo->prepare("SELECT * FROM budgettransaction WHERE budgetId=?");
             $stmt->execute([$budgetId]);
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
@@ -23,7 +23,12 @@
         public function findbugetBytransactionId( $transactionId ){
             $stmt = $this->pdo->prepare("SELECT * FROM budgettransaction WHERE transactionId=?");
             $stmt->execute([$transactionId]);
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+            return $stmt->fetch(PDO::FETCH_ASSOC);
+        }
+
+        public function deleteBudgettransactionByTransactionId($transactionId){
+            $stmt = $this->pdo->prepare("DELETE FROM budgettransaction WHERE transactionId=?");
+            return $stmt->execute([$transactionId]);
         }
     }
 

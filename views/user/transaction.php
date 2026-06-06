@@ -1,3 +1,59 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+  session_start();
+}
+
+require_once __DIR__ . '/shared.php';
+define('CONTROLLER_INCLUDED', true);
+require_once __DIR__ . '/../../controllers/transactionController.php';
+
+$currentUserId = $currentUser['id'] ?? ($_SESSION['user']['id'] ?? null);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['crud_action'])) {
+  $crudAction = $_POST['crud_action'];
+  transactionController($crudAction, $_POST);
+  header('Location: ' . userPageUrl('transaction'));
+  exit;
+}
+
+$filters = [
+  'search' => trim($_GET['search'] ?? ''),
+  'type' => strtoupper($_GET['type'] ?? ''),
+  'categoryId' => $_GET['categoryId'] ?? '',
+  'sort' => $_GET['sort'] ?? 'date_desc',
+];
+
+$transactionData = userTransactionPageData($currentUserId, $filters);
+$summary = $transactionData['summary'] ?? ['income' => 0, 'expenses' => 0, 'balance' => 0, 'transactions' => 0];
+$transactions = $transactionData['transactions'] ?? [];
+$categories = userCategoryList();
+$budgets = userBudgetRecords($currentUserId);
+$months = $transactionData['months'] ?? [];
+$displayName = $userName ?: trim(($currentUser['name'] ?? 'User') . ' ' . ($currentUser['lastName'] ?? ''));
+$displayInitials = $userInitials ?: 'U';
+$editingTransaction = null;
+
+if (!empty($_GET['edit'])) {
+  $editId = (int) $_GET['edit'];
+  foreach ($transactions as $transaction) {
+    if ((int) ($transaction['idTransaction'] ?? 0) === $editId) {
+      $editingTransaction = $transaction;
+      break;
+    }
+  }
+}
+
+$transactionModalAction = $editingTransaction ? 'update' : 'create';
+$transactionModalTitle = $editingTransaction ? 'Edit Transaction' : 'Add Transaction';
+$transactionModalButton = $editingTransaction ? '💾 Update transaction' : '💾 Save transaction';
+$transactionModalDescription = $editingTransaction['description'] ?? '';
+$transactionModalNote = $editingTransaction['note'] ?? '';
+$transactionModalAmount = $editingTransaction['amout'] ?? '';
+$transactionModalDate = !empty($editingTransaction['date']) ? date('Y-m-d', strtotime($editingTransaction['date'])) : date('Y-m-d');
+$transactionModalCategoryId = $editingTransaction['categoryId'] ?? ($categories[0]['idCategory'] ?? '');
+$transactionModalBudgetId = $editingTransaction['budgetId'] ?? '';
+$transactionModalType = strtoupper($editingTransaction['transCategory'] ?? 'EXPENSE');
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -52,7 +108,11 @@
     .nav-item.active { background:var(--purple); color:#fff; font-weight:700; border-radius:10px; margin:0 10px; padding:11px 12px; }
     .nav-icon { font-size:1rem; width:20px; text-align:center; }
     .sidebar-spacer { flex:1; }
-    .sidebar-user { display:flex; align-items:center; gap:10px; padding:14px 22px; border-top:1px solid rgba(255,255,255,.08); }
+    .sidebar-user { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 22px; border-top:1px solid rgba(255,255,255,.08); }
+    .sidebar-user-info { display:flex; flex-direction:column; gap:4px; min-width:0; }
+    .user-name a { color:#fff; text-decoration:none; }
+    .btn-logout { background:var(--yellow); color:#7a5c00; border:none; border-radius:9px; padding:9px 12px; font-family:'Sora',sans-serif; font-weight:700; font-size:.78rem; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; }
+    .btn-logout:hover { opacity:.9; }
     .user-ava { width:36px; height:36px; border-radius:50%; background:var(--purple); color:#fff; display:flex; align-items:center; justify-content:center; font-size:.78rem; font-weight:700; flex-shrink:0; }
     .user-name { font-size:.85rem; font-weight:600; color:#fff; }
     .user-plan { font-size:.72rem; color:#6b6e80; }
@@ -65,8 +125,6 @@
     .topbar h1 { font-size:1.4rem; font-weight:800; }
     .topbar p  { font-size:.82rem; color:var(--text-muted); margin-top:2px; }
     .topbar-right { display:flex; gap:10px; align-items:center; }
-    .btn-export { background:var(--white); border:1px solid var(--border); color:var(--text-mid); font-family:'DM Sans',sans-serif; font-size:.85rem; font-weight:600; padding:9px 16px; border-radius:9px; cursor:pointer; transition:background .15s; }
-    .btn-export:hover { background:#f0edff; }
     .btn-add { background:var(--purple); color:#fff; border:none; border-radius:9px; padding:9px 18px; font-family:'Sora',sans-serif; font-weight:700; font-size:.85rem; cursor:pointer; display:flex; align-items:center; gap:6px; box-shadow:0 4px 14px rgba(124,106,245,.3); transition:opacity .2s,transform .15s; }
     .btn-add:hover { opacity:.9; transform:translateY(-1px); }
 
@@ -122,12 +180,13 @@
     .cashflow-top h4 { font-size:.95rem; font-weight:700; }
     .cashflow-top select { background:var(--input-bg); border:1px solid var(--border); border-radius:7px; font-size:.78rem; color:var(--text-mid); padding:4px 10px; cursor:pointer; }
     .cashflow-sub { font-size:.78rem; color:var(--text-muted); margin-bottom:16px; }
-    .cf-bars { display:flex; align-items:flex-end; gap:8px; height:80px; }
-    .cf-bar { flex:1; border-radius:5px 5px 0 0; }
+    .cf-bars { display:flex; align-items:flex-end; gap:8px; height:100px; }
+    .cf-group { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:8px; flex:1; }
+    .cf-group-bars { display:flex; align-items:flex-end; gap:4px; width:100%; max-width:48px; }
+    .cf-bar { width:100%; border-radius:5px 5px 0 0; }
     .cf-bar-low  { background:#e0dbff; }
     .cf-bar-high { background:var(--purple); }
-    .cf-labels { display:flex; justify-content:space-between; margin-top:6px; }
-    .cf-labels span { font-size:.7rem; color:var(--text-muted); flex:1; text-align:center; }
+    .cf-label { font-size:.72rem; color:var(--text-muted); text-align:center; }
 
     /* Wallet Card */
     .wallet-card { background:var(--purple); border-radius:var(--card-radius); padding:22px; box-shadow:0 8px 30px rgba(124,106,245,.35); color:#fff; display:flex; flex-direction:column; gap:10px; }
@@ -199,12 +258,6 @@
     .date-input-wrap input { padding-right:36px; }
     .date-icon { position:absolute; right:12px; top:50%; transform:translateY(-50%); color:var(--text-muted); pointer-events:none; }
 
-    /* Category chips */
-    .cat-chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
-    .cat-chip { padding:7px 16px; border-radius:50px; font-size:.82rem; font-weight:600; border:1.5px solid var(--border); background:var(--input-bg); color:var(--text-mid); cursor:pointer; transition:all .15s; font-family:'DM Sans',sans-serif; }
-    .cat-chip.active { background:var(--purple); border-color:var(--purple); color:#fff; }
-    .cat-chip:hover:not(.active) { border-color:var(--purple); color:var(--purple); }
-
     /* Modal footer */
     .modal-footer { display:flex; justify-content:flex-end; gap:10px; margin-top:20px; }
     .btn-cancel { background:none; border:1.5px solid var(--border); border-radius:9px; padding:10px 20px; font-family:'DM Sans',sans-serif; font-weight:600; font-size:.88rem; color:var(--text-mid); cursor:pointer; transition:background .15s; }
@@ -222,28 +275,29 @@
     <h2>Finzo</h2>
   </div>
   <div class="sidebar-section-label">Main</div>
-  <a class="nav-item" href="#">
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('dashboard'), ENT_QUOTES, 'UTF-8') ?>">
     <span class="nav-icon">🏠</span> Dashboard
   </a>
-  <a class="nav-item active" href="#">
+  <a class="nav-item active" href="<?= htmlspecialchars(userPageUrl('transaction'), ENT_QUOTES, 'UTF-8') ?>">
     <span class="nav-icon">💳</span> Transactions
   </a>
-  <a class="nav-item" href="#">
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('budget'), ENT_QUOTES, 'UTF-8') ?>">
     <span class="nav-icon">🎯</span> Budgets
   </a>
-  <a class="nav-item" href="#">
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('category'), ENT_QUOTES, 'UTF-8') ?>">
     <span class="nav-icon">🗂️</span> Categories
   </a>
   <div class="sidebar-section-label" style="margin-top:18px;">Collaboration</div>
-  <a class="nav-item" href="#"><span class="nav-icon">👥</span> My Groups</a>
-  <a class="nav-item" href="#"><span class="nav-icon">🔔</span> Alerts</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('group'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">👥</span> My Groups</a>
+  <a class="nav-item" href="<?= htmlspecialchars(userPageUrl('alert'), ENT_QUOTES, 'UTF-8') ?>"><span class="nav-icon">🔔</span> Alerts</a>
   <div class="sidebar-spacer"></div>
   <div class="sidebar-user">
-    <div class="user-ava">KM</div>
-    <div>
-      <div class="user-name">Karim M.</div>
-      <div class="user-plan">Free plan</div>
+    <div class="user-ava"><?= htmlspecialchars($displayInitials, ENT_QUOTES, 'UTF-8') ?></div>
+    <div class="sidebar-user-info">
+      <div class="user-name"><a href="<?= htmlspecialchars(userPageUrl('profile'), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') ?></a></div>
+      <div class="user-plan"><?= htmlspecialchars(($currentUser['role'] ?? 'user') . ' plan', ENT_QUOTES, 'UTF-8') ?></div>
     </div>
+    <a class="btn-logout" href="<?= htmlspecialchars(userPageUrl('logout'), ENT_QUOTES, 'UTF-8') ?>">Logout</a>
   </div>
 </aside>
 
@@ -254,10 +308,9 @@
   <div class="topbar">
     <div>
       <h1>Transactions</h1>
-      <p>47 transactions</p>
+      <p><?= (int) $summary['transactions'] ?> transactions</p>
     </div>
     <div class="topbar-right">
-      <button class="btn-export">Export CSV</button>
       <button class="btn-add" onclick="openModal()">＋ Add Transaction</button>
     </div>
   </div>
@@ -266,32 +319,44 @@
   <div class="stat-strip">
     <div class="stat-cell">
       <div class="label">Total Income</div>
-      <div class="value v-green">+ 6500 TND</div>
+      <div class="value v-green">+ <?= number_format((float) $summary['income'], 0, '.', ',') ?> TND</div>
     </div>
     <div class="stat-cell">
       <div class="label">Total Expenses</div>
-      <div class="value v-red">- 2220 TND</div>
+      <div class="value v-red">- <?= number_format((float) $summary['expenses'], 0, '.', ',') ?> TND</div>
     </div>
     <div class="stat-cell">
       <div class="label">Net Balance</div>
-      <div class="value v-purple">4280 TND</div>
+      <div class="value v-purple"><?= number_format((float) $summary['balance'], 0, '.', ',') ?> TND</div>
     </div>
   </div>
 
   <!-- Filters -->
-  <div class="filters">
+  <form method="get" action="<?= htmlspecialchars(userPageUrl('transaction'), ENT_QUOTES, 'UTF-8') ?>" class="filters" id="transactionFilters">
     <div class="search-box">
       <span style="color:var(--text-muted)">🔍</span>
-      <input type="text" placeholder="Search transactions…"/>
+      <input type="text" name="search" placeholder="Search transactions…" value="<?= htmlspecialchars($filters['search'], ENT_QUOTES, 'UTF-8') ?>" />
     </div>
     <div class="tab-group">
-      <button class="tab-btn active" onclick="setTab(this)">All</button>
-      <button class="tab-btn" onclick="setTab(this)">Income</button>
-      <button class="tab-btn" onclick="setTab(this)">Expenses</button>
+      <button type="button" class="tab-btn<?= $filters['type'] === '' ? ' active' : '' ?>" onclick="setFilterType('')">All</button>
+      <button type="button" class="tab-btn<?= $filters['type'] === 'INCOME' ? ' active' : '' ?>" onclick="setFilterType('INCOME')">Income</button>
+      <button type="button" class="tab-btn<?= $filters['type'] === 'EXPENSE' ? ' active' : '' ?>" onclick="setFilterType('EXPENSE')">Expenses</button>
     </div>
-    <select class="filter-select"><option>Category ∨</option><option>Food</option><option>Transport</option><option>Housing</option><option>Health</option><option>Software</option><option>Revenue</option><option>Dining</option></select>
-    <select class="filter-select"><option>Sort: Date ∨</option><option>Sort: Amount</option><option>Sort: Category</option></select>
-  </div>
+    <input type="hidden" name="type" id="filterType" value="<?= htmlspecialchars($filters['type'], ENT_QUOTES, 'UTF-8') ?>" />
+    <select class="filter-select" name="categoryId" onchange="this.form.submit()">
+      <option value="">Category ∨</option>
+      <?php foreach ($categories as $category): ?>
+        <option value="<?= htmlspecialchars($category['idCategory'], ENT_QUOTES, 'UTF-8') ?>"<?= $filters['categoryId'] === (string) $category['idCategory'] ? ' selected' : '' ?>><?= htmlspecialchars($category['name'], ENT_QUOTES, 'UTF-8') ?></option>
+      <?php endforeach; ?>
+    </select>
+    <select class="filter-select" name="sort" onchange="this.form.submit()">
+      <option value="date_desc"<?= $filters['sort'] === 'date_desc' ? ' selected' : '' ?>>Sort: Date ∨</option>
+      <option value="date_asc"<?= $filters['sort'] === 'date_asc' ? ' selected' : '' ?>>Sort: Oldest</option>
+      <option value="amount_desc"<?= $filters['sort'] === 'amount_desc' ? ' selected' : '' ?>>Sort: Amount ▾</option>
+      <option value="amount_asc"<?= $filters['sort'] === 'amount_asc' ? ' selected' : '' ?>>Sort: Amount ▴</option>
+      <option value="category"<?= $filters['sort'] === 'category' ? ' selected' : '' ?>>Sort: Category</option>
+    </select>
+  </form>
 
   <!-- Table -->
   <div class="table-card">
@@ -303,57 +368,47 @@
           <th>Category</th>
           <th>Amount</th>
           <th>Status</th>
-          <th>Actions</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <td><div class="td-date">Oct 24, 2023<span class="time">11:01 AM</span></div></td>
-          <td><div class="td-desc"><div class="name">Amazon Web Services</div><div class="sub">Monthly Cloud Hosting Subscription</div></div></td>
-          <td><span class="cat-badge"><span class="cat-icon">💻</span>SOFTWARE</span></td>
-          <td class="td-amount" style="color:var(--red)">-$492.00</td>
-          <td><span class="status-badge s-completed">● Completed</span></td>
-          <td><div class="td-actions"><button class="action-btn">✏️</button><button class="action-btn">🗑️</button></div></td>
-        </tr>
-        <tr>
-          <td><div class="td-date">Oct 23, 2023<span class="time">12:15 PM</span></div></td>
-          <td><div class="td-desc"><div class="name">Inbound Transfer</div><div class="sub">Client Payment · Zenith Corp.</div></div></td>
-          <td><span class="cat-badge" style="background:#e6faf6;color:var(--green)"><span class="cat-icon">💹</span>REVENUE</span></td>
-          <td class="td-amount" style="color:var(--green)">+$2,850.00</td>
-          <td><span class="status-badge s-completed">● Completed</span></td>
-          <td><div class="td-actions"><button class="action-btn">✏️</button><button class="action-btn">🗑️</button></div></td>
-        </tr>
-        <tr>
-          <td><div class="td-date">Oct 22, 2023<span class="time">08:30 AM</span></div></td>
-          <td><div class="td-desc"><div class="name">Blue Bottle Coffee</div><div class="sub">Team Morning Catchup</div></div></td>
-          <td><span class="cat-badge" style="background:#fff8e6;color:#c8960c"><span class="cat-icon">☕</span>DINING</span></td>
-          <td class="td-amount" style="color:var(--red)">-$42.50</td>
-          <td><span class="status-badge s-pending">● Pending</span></td>
-          <td><div class="td-actions"><button class="action-btn">✏️</button><button class="action-btn">🗑️</button></div></td>
-        </tr>
-        <tr>
-          <td><div class="td-date">Oct 21, 2023<span class="time">06:30 AM</span></div></td>
-          <td><div class="td-desc"><div class="name">Uber Technologies</div><div class="sub">Commute to Airport</div></div></td>
-          <td><span class="cat-badge" style="background:#e8f4ff;color:var(--blue)"><span class="cat-icon">🚗</span>TRANSPORT</span></td>
-          <td class="td-amount" style="color:var(--red)">-$38.00</td>
-          <td><span class="status-badge s-completed">● Completed</span></td>
-          <td><div class="td-actions"><button class="action-btn">✏️</button><button class="action-btn">🗑️</button></div></td>
-        </tr>
-        <tr>
-          <td><div class="td-date">Oct 20, 2023<span class="time">11:15 AM</span></div></td>
-          <td><div class="td-desc"><div class="name">WeWork Office</div><div class="sub">Quarterly Desk Membership</div></div></td>
-          <td><span class="cat-badge" style="background:#ffe8f0;color:#d63864"><span class="cat-icon">🏢</span>RENT</span></td>
-          <td class="td-amount" style="color:var(--red)">-$1,000.00</td>
-          <td><span class="status-badge s-cancelled">● Cancelled</span></td>
-          <td><div class="td-actions"><button class="action-btn">✏️</button><button class="action-btn">🗑️</button></div></td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Bottom Row -->
-  <div class="bottom-row">
-    <!-- Cash Flow -->
+          <?php if (empty($transactions)): ?>
+            <tr>
+              <td colspan="6" style="padding:20px 16px;color:var(--text-muted);text-align:center;">No transactions found for this account.</td>
+            </tr>
+          <?php else: ?>
+            <?php foreach ($transactions as $transaction): ?>
+              <?php
+                $isIncome = strtoupper((string) ($transaction['transCategory'] ?? '')) === 'INCOME';
+                $amount = (float) ($transaction['amout'] ?? 0);
+                $dateValue = !empty($transaction['date']) ? strtotime($transaction['date']) : false;
+                $dateLabel = $dateValue ? date('M d, Y', $dateValue) : 'Unknown date';
+                $timeLabel = $dateValue ? date('h:i A', $dateValue) : '';
+                $categoryName = $transaction['categoryName'] ?? ($transaction['transType'] ?? 'Uncategorized');
+                $icon = userCategoryIcon($categoryName ?: ($transaction['description'] ?? 'Transaction'));
+              ?>
+              <tr>
+                <td><div class="td-date"><?= htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') ?><span class="time"><?= htmlspecialchars($timeLabel, ENT_QUOTES, 'UTF-8') ?></span></div></td>
+                <td><div class="td-desc"><div class="name"><?= htmlspecialchars($transaction['description'] ?? 'Transaction', ENT_QUOTES, 'UTF-8') ?></div><div class="sub"><?= htmlspecialchars($transaction['note'] ?? '', ENT_QUOTES, 'UTF-8') ?></div></div></td>
+                <td><span class="cat-badge" style="<?= $isIncome ? 'background:#e6faf6;color:var(--green)' : '' ?>"><span class="cat-icon"><?= htmlspecialchars($icon, ENT_QUOTES, 'UTF-8') ?></span><?= htmlspecialchars(strtoupper($categoryName), ENT_QUOTES, 'UTF-8') ?></span></td>
+                <td class="td-amount" style="color:<?= $isIncome ? 'var(--green)' : 'var(--red)' ?>"><?= $isIncome ? '+' : '-' ?><?= number_format($amount, 0, '.', ',') ?> TND</td>
+                <td><span class="status-badge s-completed">● Completed</span></td>
+                <td>
+                  <div class="td-actions">
+                    <a class="action-btn" href="<?= htmlspecialchars(userPageUrl('transaction') . '?edit=' . (int) ($transaction['idTransaction'] ?? 0), ENT_QUOTES, 'UTF-8') ?>">✏️</a>
+                    <form method="post" action="<?= htmlspecialchars(userPageUrl('transaction'), ENT_QUOTES, 'UTF-8') ?>" onsubmit="return confirm('Delete this transaction?');" style="display:inline;">
+                      <input type="hidden" name="crud_action" value="delete"/>
+                      <input type="hidden" name="id" value="<?= (int) ($transaction['idTransaction'] ?? 0) ?>"/>
+                      <button class="action-btn" type="submit">🗑️</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
     <div class="cashflow-card">
       <div class="cashflow-top">
         <div>
@@ -362,23 +417,38 @@
         </div>
         <select><option>Last 6 Months ∨</option><option>Last 3 Months</option><option>This Year</option></select>
       </div>
-      <div class="cf-bars">
-        <div class="cf-bar cf-bar-low"  style="height:30%"></div>
-        <div class="cf-bar cf-bar-low"  style="height:45%"></div>
-        <div class="cf-bar cf-bar-low"  style="height:38%"></div>
-        <div class="cf-bar cf-bar-low"  style="height:55%"></div>
-        <div class="cf-bar cf-bar-low"  style="height:40%"></div>
-        <div class="cf-bar cf-bar-high" style="height:85%"></div>
-      </div>
-      <div class="cf-labels">
-        <span>MAY</span><span>JUN</span><span>JUL</span><span>AUG</span><span>SEP</span><span>OCT</span>
-      </div>
+      <?php
+      if (empty($months)) {
+        $months = [];
+        for ($m = 5; $m >= 0; $m--) {
+          $months[] = ['monthLabel' => date('M', strtotime("-{$m} months")), 'income' => 0, 'expenses' => 0];
+        }
+      }
+      $maxMonthValue = 1;
+      foreach ($months as $month) {
+        $maxMonthValue = max($maxMonthValue, (float) ($month['income'] ?? 0), (float) ($month['expenses'] ?? 0));
+      }
+    ?>
+    <div class="cf-bars">
+      <?php foreach ($months as $month): ?>
+        <?php
+          $incomeHeight = (int) round(((float) ($month['income'] ?? 0) / $maxMonthValue) * 100);
+          $expenseHeight = (int) round(((float) ($month['expenses'] ?? 0) / $maxMonthValue) * 100);
+        ?>
+        <div class="cf-group">
+          <div class="cf-group-bars">
+            <div class="cf-bar cf-bar-high" style="height:<?= $incomeHeight ?>%" title="Income: <?= number_format((float) ($month['income'] ?? 0), 0, '.', ',') ?> TND"></div>
+            <div class="cf-bar cf-bar-low" style="height:<?= $expenseHeight ?>%" title="Expenses: <?= number_format((float) ($month['expenses'] ?? 0), 0, '.', ',') ?> TND"></div>
+          </div>
+          <div class="cf-label"><?= htmlspecialchars($month['monthLabel'], ENT_QUOTES, 'UTF-8') ?></div>
+        </div>
+      <?php endforeach; ?>
     </div>
 
     <!-- Wallet -->
     <div class="wallet-card">
       <div class="wallet-label">Organization Wallet</div>
-      <div class="wallet-amount">$42,910.45</div>
+      <div class="wallet-amount"><?= number_format((float) $summary['balance'], 2, '.', ',') ?> TND</div>
       <div class="wallet-sub">Available balance across all accounts</div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
         <div class="wallet-avatars">
@@ -393,29 +463,35 @@
 </main>
 
 <!-- ── MODAL ── -->
-<div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
+<div class="modal-overlay<?= $editingTransaction ? ' open' : '' ?>" id="modalOverlay" onclick="handleOverlayClick(event)">
   <div class="modal">
     <div class="modal-header">
       <div>
-        <h3>Add Transaction</h3>
+        <h3><?= htmlspecialchars($transactionModalTitle, ENT_QUOTES, 'UTF-8') ?></h3>
         <p>Log a new income or expense</p>
       </div>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
 
+    <form method="post" action="<?= htmlspecialchars(userPageUrl('transaction'), ENT_QUOTES, 'UTF-8') ?>">
+      <input type="hidden" name="crud_action" id="crudAction" value="<?= htmlspecialchars($transactionModalAction, ENT_QUOTES, 'UTF-8') ?>"/>
+      <input type="hidden" name="id" id="transactionId" value="<?= htmlspecialchars($editingTransaction['idTransaction'] ?? '', ENT_QUOTES, 'UTF-8') ?>"/>
+      <input type="hidden" name="transCategory" id="transCategory" value="<?= htmlspecialchars($transactionModalType, ENT_QUOTES, 'UTF-8') ?>"/>
+      <input type="hidden" name="transType" id="transType" value="<?= htmlspecialchars($transactionModalType, ENT_QUOTES, 'UTF-8') ?>"/>
+
     <!-- Type toggle -->
     <div class="type-toggle">
-      <button class="type-btn expense active" id="btnExpense" onclick="setType('expense')">
+      <button type="button" class="type-btn expense<?= $transactionModalType === 'EXPENSE' ? ' active' : '' ?>" id="btnExpense" onclick="setType('EXPENSE')">
         <span class="arrow">↓</span> Expense
       </button>
-      <button class="type-btn income" id="btnIncome" onclick="setType('income')">
+      <button type="button" class="type-btn income<?= $transactionModalType === 'INCOME' ? ' active' : '' ?>" id="btnIncome" onclick="setType('INCOME')">
         <span class="arrow">↑</span> Income
       </button>
     </div>
 
     <!-- Amount -->
     <div class="amount-display">
-      <input type="number" id="amountInput" placeholder="0.00" step="0.01" min="0"/>
+      <input type="number" id="amountInput" name="amount" placeholder="0.00" step="0.01" min="0" value="<?= htmlspecialchars((string) $transactionModalAmount, ENT_QUOTES, 'UTF-8') ?>" required/>
       <span class="currency">TND</span>
     </div>
 
@@ -423,46 +499,71 @@
     <div class="form-row-2">
       <div class="form-group" style="margin-bottom:0">
         <label>Description <span>*</span></label>
-        <input type="text" placeholder="e.g. Grocery store"/>
+        <input type="text" name="description" placeholder="e.g. Grocery store" value="<?= htmlspecialchars($transactionModalDescription, ENT_QUOTES, 'UTF-8') ?>" required/>
       </div>
       <div class="form-group" style="margin-bottom:0">
         <label>Date <span>*</span></label>
         <div class="date-input-wrap">
-          <input type="date" id="dateInput"/>
+          <input type="date" id="dateInput" name="date" value="<?= htmlspecialchars($transactionModalDate, ENT_QUOTES, 'UTF-8') ?>" required/>
           <span class="date-icon">📅</span>
         </div>
       </div>
     </div>
 
-    <!-- Category chips -->
+    <div class="form-group" style="margin-top:14px;">
+      <label>Budget <span>*</span></label>
+      <select name="budgetId" id="budgetSelect" required>
+        <option value="">Select a budget</option>
+        <?php foreach ($budgets as $budget): ?>
+          <?php
+            $labelParts = [];
+            if (!empty($budget['name'])) {
+              $labelParts[] = $budget['name'];
+            }
+            if (!empty($budget['categoryName'])) {
+              $labelParts[] = $budget['categoryName'];
+            }
+            if (!empty($budget['note'])) {
+              $labelParts[] = $budget['note'];
+            }
+            if (empty($labelParts)) {
+              $labelParts[] = 'Budget #' . ($budget['idBudget'] ?? '');
+            }
+            $budgetLabel = implode(' • ', $labelParts);
+          ?>
+          <option value="<?= htmlspecialchars($budget['idBudget'], ENT_QUOTES, 'UTF-8') ?>" <?= (string) $transactionModalBudgetId === (string) $budget['idBudget'] ? 'selected' : '' ?>><?= htmlspecialchars($budgetLabel, ENT_QUOTES, 'UTF-8') ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+
     <div class="form-group" style="margin-top:14px;">
       <label>Category <span>*</span></label>
-      <div class="cat-chips" id="catChips">
-        <button class="cat-chip active" onclick="setChip(this)">Food</button>
-        <button class="cat-chip" onclick="setChip(this)">Transport</button>
-        <button class="cat-chip" onclick="setChip(this)">Housing</button>
-        <button class="cat-chip" onclick="setChip(this)">Health</button>
-        <button class="cat-chip" onclick="setChip(this)">Shopping</button>
-        <button class="cat-chip" onclick="setChip(this)">Other</button>
-      </div>
+      <select name="categoryId" id="categorySelect" required>
+        <?php foreach ($categories as $category): ?>
+          <option value="<?= htmlspecialchars($category['idCategory'], ENT_QUOTES, 'UTF-8') ?>" <?= (string) $transactionModalCategoryId === (string) $category['idCategory'] ? 'selected' : '' ?>><?= htmlspecialchars($category['name'], ENT_QUOTES, 'UTF-8') ?></option>
+        <?php endforeach; ?>
+      </select>
     </div>
 
     <!-- Note -->
     <div class="form-group">
       <label>Note (optional)</label>
-      <textarea placeholder="Add a short note about this transaction…"></textarea>
+      <textarea name="note" placeholder="Add a short note about this transaction…"><?= htmlspecialchars($transactionModalNote, ENT_QUOTES, 'UTF-8') ?></textarea>
     </div>
 
     <div class="modal-footer">
-      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="btn-save">💾 Save transaction</button>
+      <button type="button" class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-save" type="submit"><?= htmlspecialchars($transactionModalButton, ENT_QUOTES, 'UTF-8') ?></button>
     </div>
+    </form>
   </div>
 </div>
 
 <script>
   // Set today's date as default
-  document.getElementById('dateInput').valueAsDate = new Date();
+  if (!document.getElementById('dateInput').value) {
+    document.getElementById('dateInput').valueAsDate = new Date();
+  }
 
   function openModal() {
     document.getElementById('modalOverlay').classList.add('open');
@@ -477,21 +578,18 @@
   function setType(type) {
     const btnE = document.getElementById('btnExpense');
     const btnI = document.getElementById('btnIncome');
-    if (type === 'expense') {
+    document.getElementById('transCategory').value = type;
+    document.getElementById('transType').value = type;
+    if (type === 'EXPENSE') {
       btnE.classList.add('active'); btnI.classList.remove('active');
     } else {
       btnI.classList.add('active'); btnE.classList.remove('active');
     }
   }
 
-  function setTab(el) {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    el.classList.add('active');
-  }
-
-  function setChip(el) {
-    document.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
-    el.classList.add('active');
+  function setFilterType(type) {
+    document.getElementById('filterType').value = type;
+    document.getElementById('transactionFilters').submit();
   }
 
   // Keyboard close

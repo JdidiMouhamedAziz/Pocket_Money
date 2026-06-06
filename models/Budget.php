@@ -7,9 +7,9 @@
         }
 
         //Create Bubget
-        public function createBdget($limit,$period,$startDate,$note,$sendAlertAt,$userId){
-            $stmt= $this->pdo->prepare("INSERT INTO budget (limit,period,startDate,note,sendAlertAt,userId) VALUES(?,?,?,?,?,?");
-            return $stmt->execute([$limit,$period,$startDate,$note,$sendAlertAt,$userId]);
+        public function createBdget($name,$limit,$period,$startDate,$note,$sendAlertAt,$userId){
+            $stmt= $this->pdo->prepare("INSERT INTO budget (`name`, `limit`, period, startDate, note, sendAlertAt, userId) VALUES(?,?,?,?,?,?,?)");
+            return $stmt->execute([$name,$limit,$period,$startDate,$note,$sendAlertAt,$userId]);
         }
 
         //Find All Budgets
@@ -21,7 +21,7 @@
 
         // find Budget By Id
         public function findBudgetById( $id ){
-            $stmt= $this->pdo->prepare("SELECT * FROM budget WHERE id=?");
+            $stmt= $this->pdo->prepare("SELECT * FROM budget WHERE idBudget=?");
             $stmt->execute([$id]);
             return $stmt->fetch(PDO::FETCH_ASSOC);
         }
@@ -55,9 +55,9 @@
         }
 
         //update Budget
-        public function updateBudget($idBudget,$limit,$period,$startDate,$note,$sendAlertAt){
-            $stmt= $this->pdo->prepare("UPDATE budget SET limit=?,period=?,startDate=?,note=?,sendAlertAl=? WHERE id=?");
-            return $stmt->execute([$limit, $period, $startDate, $note, $sendAlertAt, $idBudget]);
+        public function updateBudget($idBudget,$name,$limit,$period,$startDate,$note,$sendAlertAt){
+            $stmt= $this->pdo->prepare("UPDATE budget SET `name`=?, `limit`=?, period=?, startDate=?, note=?, sendAlertAt=? WHERE idBudget=?");
+            return $stmt->execute([$name, $limit, $period, $startDate, $note, $sendAlertAt, $idBudget]);
         }
 
         //DELETE budget
